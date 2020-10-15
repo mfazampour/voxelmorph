@@ -2,8 +2,61 @@ import os
 import sys
 import glob
 import numpy as np
+from pathlib import Path
+import torchio
+from torchio.transforms import (
+    RescaleIntensity,
+    RandomAffine,
+    RandomElasticDeformation,
+    Compose,
+    OneOf,
+    CropOrPad,
+    Pad,
+    RandomFlip
+)
 
 from . import py
+
+
+def biobank_transform(target_shape=None, min_value=0, max_value=1):
+    rescale = RescaleIntensity((min_value, max_value))
+    transforms = [rescale]
+    if target_shape is not None:
+        transforms.append(CropOrPad(target_shape=target_shape))
+    return Compose(transforms)
+
+def volgen_biobank(source_folder: str, img_pattern='T1_brain_affine_to_mni', seg_pattern='T1_brain_seg_affine_to_mni',
+                   batch_size=1, return_segs=False, np_var='vol', target_shape=None, resize_factor=1, add_feat_axis=False):
+    # convert glob path to filenames
+
+    assert os.path.isdir(source_folder), 'source folder is not a folder '
+
+    vol_names = []
+    for path in Path(source_folder).rglob(f'*{img_pattern}*'):
+        vol_names.append(str(path))
+
+    seg_names = []
+    for path in Path(source_folder).rglob(f'*{seg_pattern}*'):
+        seg_names.append(str(path))
+
+    transform = biobank_transform(target_shape)
+
+    while True:
+        # generate [batchsize] random image indices
+        indices = np.random.randint(len(vol_names), size=batch_size)
+
+        # load volumes and concatenate
+        load_params = dict(np_var=np_var, add_batch_axis=True, add_feat_axis=False, pad_shape=None,
+                           resize_factor=resize_factor)
+        imgs = [np.expand_dims(transform(py.utils.load_volfile(vol_names[i], **load_params)), axis=-1) for i in indices]
+        vols = [np.concatenate(imgs, axis=0)]
+
+        # optionally load segmentations and concatenate
+        if return_segs:
+            segs = [np.expand_dims(transform(py.utils.load_volfile(seg_names[i], **load_params)), axis=-1) for i in indices]
+            vols.append(np.concatenate(segs, axis=0))
+
+        yield tuple(vols)
 
 
 def volgen(
@@ -43,7 +96,8 @@ def volgen(
         indices = np.random.randint(len(vol_names), size=batch_size)
 
         # load volumes and concatenate
-        load_params = dict(np_var=np_var, add_batch_axis=True, add_feat_axis=add_feat_axis, pad_shape=pad_shape, resize_factor=resize_factor)
+        load_params = dict(np_var=np_var, add_batch_axis=True, add_feat_axis=add_feat_axis, pad_shape=pad_shape,
+                           resize_factor=resize_factor)
         imgs = [py.utils.load_volfile(vol_names[i], **load_params) for i in indices]
         vols = [np.concatenate(imgs, axis=0)]
 
@@ -56,11 +110,12 @@ def volgen(
         yield tuple(vols)
 
 
-def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=False, **kwargs):
+def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=False, use_biobank=False, **kwargs):
     """
     Generator for scan-to-scan registration.
 
     Parameters:
+        use_biobank: Modified generator for loading biobank MR data to train voxelmorph
         vol_names: List of volume files to load.
         bidir: Yield input image as output for bidirectional models. Default is False.
         batch_size: Batch size. Default is 1.
@@ -69,7 +124,12 @@ def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=Fals
         kwargs: Forwarded to the internal volgen generator.
     """
     zeros = None
-    gen = volgen(vol_names, batch_size=batch_size, **kwargs)
+
+    if use_biobank:
+        gen = volgen_biobank(vol_names, batch_size=batch_size, **kwargs)
+    else:
+        gen = volgen(vol_names, batch_size=batch_size, **kwargs)
+
     while True:
         scan1 = next(gen)[0]
         scan2 = next(gen)[0]
@@ -86,7 +146,7 @@ def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=Fals
             shape = scan1.shape[1:-1]
             zeros = np.zeros((batch_size, *shape, len(shape)))
 
-        invols  = [scan1, scan2]
+        invols = [scan1, scan2]
         outvols = [scan2, scan1] if bidir else [scan2]
         if not no_warp:
             outvols.append(zeros)
@@ -115,7 +175,7 @@ def scan_to_atlas(vol_names, atlas, bidir=False, batch_size=1, no_warp=False, **
     gen = volgen(vol_names, batch_size=batch_size, **kwargs)
     while True:
         scan = next(gen)[0]
-        invols  = [scan, atlas]
+        invols = [scan, atlas]
         outvols = [atlas, scan] if bidir else [atlas]
         if not no_warp:
             outvols.append(zeros)
@@ -166,8 +226,8 @@ def semisupervised(vol_names, labels, atlas_file=None, downsize=2):
             shape = src_vol.shape[1:-1]
             zeros = np.zeros((1, *shape, len(shape)))
 
-        invols  = [src_vol, trg_vol, src_seg]
-        outvols = [trg_vol, zeros,   trg_seg]
+        invols = [src_vol, trg_vol, src_seg]
+        outvols = [trg_vol, zeros, trg_seg]
         yield (invols, outvols)
 
 
@@ -188,12 +248,13 @@ def template_creation(vol_names, atlas, bidir=False, batch_size=1, **kwargs):
     gen = volgen(vol_names, batch_size=batch_size, **kwargs)
     while True:
         scan = next(gen)[0]
-        invols  = [atlas, scan]  # TODO: this is opposite of the normal ordering and might be confusing
+        invols = [atlas, scan]  # TODO: this is opposite of the normal ordering and might be confusing
         outvols = [scan, atlas, zeros, zeros] if bidir else [scan, zeros, zeros]
         yield (invols, outvols)
 
 
-def conditional_template_creation(vol_names, atlas, attributes, batch_size=1, np_var='vol', pad_shape=None, add_feat_axis=True):
+def conditional_template_creation(vol_names, atlas, attributes, batch_size=1, np_var='vol', pad_shape=None,
+                                  add_feat_axis=True):
     """
     Generator for conditional template creation.
 
@@ -220,7 +281,7 @@ def conditional_template_creation(vol_names, atlas, attributes, batch_size=1, np
         vols = [py.utils.load_volfile(vol_names[i], **load_params) for i in indices]
         vols = np.concatenate(vols, axis=0)
 
-        invols  = [pheno, atlas, vols]
+        invols = [pheno, atlas, vols]
         outvols = [vols, zeros, zeros, zeros]
         yield (invols, outvols)
 
@@ -239,7 +300,7 @@ def surf_semisupervised(
         sdt_vol_resize=1,
         align_segs=False,
         add_feat_axis=True
-    ):
+):
     """
     Scan-to-atlas generator for semi-supervised learning using surface point clouds from segmentations.
 
@@ -281,15 +342,17 @@ def surf_semisupervised(
     atlas_seg_bs = np.repeat(atlas_seg[np.newaxis, ..., np.newaxis], batch_size, axis=0)
 
     # prepare surface extraction function
-    std_to_surf = lambda x, y: py.utils.sdt_to_surface_pts(x, y, surface_pts_upsample_factor=surface_pts_upsample_factor, thr=(1/surface_pts_upsample_factor + 1e-5))
-    
+    std_to_surf = lambda x, y: py.utils.sdt_to_surface_pts(x, y,
+                                                           surface_pts_upsample_factor=surface_pts_upsample_factor,
+                                                           thr=(1 / surface_pts_upsample_factor + 1e-5))
+
     # prepare zeros, which will be used for outputs unused in cost functions
     zero_flow = np.zeros((batch_size, *vol_shape, len(vol_shape)))
     zero_surface_values = np.zeros((batch_size, nb_surface_pts, 1))
 
     # precompute label edge volumes
-    atlas_sdt = [None] * len(labels) 
-    atlas_label_vols = [None] * len(labels) 
+    atlas_sdt = [None] * len(labels)
+    atlas_label_vols = [None] * len(labels)
     nb_edges = np.zeros(len(labels))
     for li, label in enumerate(labels):  # if only one label, get surface points here
         atlas_label_vols[li] = atlas_seg == label
@@ -308,11 +371,11 @@ def surf_semisupervised(
             # get the surface point stack indexes for this element
             srf_idx = slice(int(np.sum(nb_surface_pts_sel[:li])), int(np.sum(nb_surface_pts_sel[:li + 1])))
             atlas_surface_pts[:, srf_idx, :-1] = np.repeat(atlas_surface_pts_, batch_size, 0)
-            atlas_surface_pts[:, srf_idx,  -1] = li
+            atlas_surface_pts[:, srf_idx, -1] = li
 
     # generator
     gen = volgen(vol_names, return_segs=True, batch_size=batch_size, add_feat_axis=add_feat_axis)
-    
+
     assert batch_size == 1, 'only batch size 1 supported for now'
 
     while True:
@@ -328,7 +391,7 @@ def surf_semisupervised(
             sel_label_idxs = np.sort(np.random.choice(range(len(labels)), size=nb_labels_sample, replace=False))
             sel_layer_edge_ratios = [layer_edge_ratios[li] for li in sel_label_idxs]
             nb_surface_pts_sel = py.utils.get_surface_pts_per_label(nb_surface_pts, sel_layer_edge_ratios)
-                
+
         # prepare signed distance transforms and surface point arrays
         X_sdt_k = np.zeros((batch_size, *sdt_shape, nb_labels_sample))
         atl_dt_k = np.zeros((batch_size, *sdt_shape, nb_labels_sample))
@@ -338,13 +401,13 @@ def surf_semisupervised(
 
         for li, sli in enumerate(sel_label_idxs):
             # get the surface point stack indexes for this element
-            srf_idx = slice(int(np.sum(nb_surface_pts_sel[:li])), int(np.sum(nb_surface_pts_sel[:li+1])))
+            srf_idx = slice(int(np.sum(nb_surface_pts_sel[:li])), int(np.sum(nb_surface_pts_sel[:li + 1])))
 
             # get atlas surface points for this label
             if nb_labels_sample != len(labels):
                 atlas_surface_pts_ = std_to_surf(atlas_sdt[sli], nb_surface_pts_sel[li])[np.newaxis, ...]
                 atlas_surface_pts[:, srf_idx, :-1] = np.repeat(atlas_surface_pts_, batch_size, 0)
-                atlas_surface_pts[:, srf_idx,  -1] = sli
+                atlas_surface_pts[:, srf_idx, -1] = sli
 
             # compute X distance from surface
             X_label = X_seg == labels[sli]
@@ -356,7 +419,7 @@ def surf_semisupervised(
                 atl_dt_k[..., li] = np.repeat(atl_dt, batch_size, 0)
                 ssp_lst = [std_to_surf(f[...], nb_surface_pts_sel[li]) for f in X_sdt_k[..., li]]
                 subj_surface_pts[:, srf_idx, :-1] = np.stack(ssp_lst, 0)
-                subj_surface_pts[:, srf_idx,  -1] = li
+                subj_surface_pts[:, srf_idx, -1] = li
 
         # check if returning segmentations instead of images
         # this is a bit hacky for basically building a segmentation-only network (no images)
@@ -370,10 +433,10 @@ def surf_semisupervised(
 
         # finally, output
         if surf_bidir:
-            inputs  = [X_ret, atlas_ret, X_sdt_k, atl_dt_k, subj_surface_pts, atlas_surface_pts]
+            inputs = [X_ret, atlas_ret, X_sdt_k, atl_dt_k, subj_surface_pts, atlas_surface_pts]
             outputs = [atlas_ret, X_ret, zero_flow, zero_surface_values, zero_surface_values]
         else:
-            inputs  = [X_ret, atlas_ret, X_sdt_k, atlas_surface_pts]
+            inputs = [X_ret, atlas_ret, X_sdt_k, atlas_surface_pts]
             outputs = [atlas_ret, X_ret, zero_flow, zero_surface_values]
 
         yield (inputs, outputs)
