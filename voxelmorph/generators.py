@@ -36,8 +36,9 @@ def volgen_biobank(source_folder: str, img_pattern='T1_brain_affine_to_mni', seg
         vol_names.append(str(path))
 
     seg_names = []
-    for path in Path(source_folder).rglob(f'*{seg_pattern}*'):
-        seg_names.append(str(path))
+    if return_segs:
+        for path in Path(source_folder).rglob(f'*{seg_pattern}*'):
+            seg_names.append(str(path))
 
     transform = biobank_transform(target_shape)
 

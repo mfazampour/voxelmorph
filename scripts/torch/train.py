@@ -85,7 +85,7 @@ def optimizers(args, bidir, model):
         weights = [1]
     # prepare deformation loss
     losses += [vxm.losses.Grad('l2', loss_mult=args.int_downsize).loss]
-    loss_names += 'L2 Reg.'
+    loss_names += 'Regularization'
     weights += [args.weight]
     return losses, optimizer, weights, loss_names
 
@@ -185,6 +185,8 @@ def create_data_generator(args):
 
 
 def train(args, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names):
+    ssim = vxm.losses.SSIM()
+
     for epoch in range(args.initial_epoch, args.epochs):
 
         # save model checkpoint
@@ -227,12 +229,13 @@ def train(args, device, generator, losses, model, model_dir, optimizer, weights,
             print('  '.join((epoch_info, step_info, time_info, loss_info)), flush=True)
 
             # tensorboard logging
-            tensorboard_log(args, epoch, inputs, loss_list, loss_names, step, writer, y_pred, y_true)
+            tensorboard_log(args, epoch, inputs, loss_list, loss_names, step, writer, y_pred, y_true, ssim=ssim)
     # final model save
     model.save(os.path.join(model_dir, '%04d.pt' % args.epochs))
 
 
-def tensorboard_log(args, epoch, inputs, loss_list, loss_names, step, writer: SummaryWriter, y_pred, y_true):
+def tensorboard_log(args, epoch, inputs, loss_list, loss_names, step,
+                    writer: SummaryWriter, y_pred, y_true, ssim: vxm.losses.SSIM = None):
     global_step = (epoch) * args.steps_per_epoch + step + 1
     if global_step % args.display_freq == 1:
         figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred[0].detach().cpu(),
@@ -247,9 +250,15 @@ def tensorboard_log(args, epoch, inputs, loss_list, loss_names, step, writer: Su
 
         fix_to_mov = torch.mean((y_true[0][y_true[0] != 0].cpu() - inputs[0][y_true[0] != 0].cpu()) ** 2)
         fix_to_reg = torch.mean((y_true[0][y_true[0] != 0].cpu() - y_pred[0][y_true[0] != 0].detach().cpu()) ** 2)
+        ssim_mov = ssim.loss(y_true[0], inputs[0]).item()
+        ssim_reg = ssim.loss(y_true[0], y_pred[0]).item()
+        ssim_increment = ssim_reg/(ssim_mov + 0.001) - 1
         diff_dict = {'Fix. to Mov.': fix_to_mov.item(),
                      'Fix. to Reg.': fix_to_reg.item(),
-                     'SSD improvement': 1 - (fix_to_reg.item()/(fix_to_mov.item() + 1e-9))}
+                     'SSD improvement': 1 - (fix_to_reg.item()/(fix_to_mov.item() + 1e-9)),
+                     'SSIM Mov.': ssim_mov,
+                     'SSIM Reg.': ssim_reg,
+                     'SSIM increment': ssim_increment}
         writer.add_scalars(main_tag='diffs', tag_scalar_dict=diff_dict, global_step=global_step)
 
 
