@@ -58,15 +58,16 @@ def main():
 
     model = create_model(args, bidir, device, inshape, nb_gpus)
 
-    losses, optimizer, weights = optimizers(args, bidir, model)
+    losses, optimizer, weights, loss_names = optimizers(args, bidir, model)
     # training loops
-    train(args, device, generator, losses, model, model_dir, optimizer, weights, writer)
+    train(args, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names)
 
 
 def optimizers(args, bidir, model):
     # set optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     # prepare image loss
+    loss_names = []
     if args.image_loss == 'ncc':
         image_loss_func = vxm.losses.NCC().loss
     elif args.image_loss == 'mse':
@@ -76,14 +77,17 @@ def optimizers(args, bidir, model):
     # need two image loss functions if bidirectional
     if bidir:
         losses = [image_loss_func, image_loss_func]
+        loss_names += [args.image_loss, args.image_loss]
         weights = [0.5, 0.5]
     else:
         losses = [image_loss_func]
+        loss_names += [args.image_loss]
         weights = [1]
     # prepare deformation loss
     losses += [vxm.losses.Grad('l2', loss_mult=args.int_downsize).loss]
+    loss_names += 'L2 Reg.'
     weights += [args.weight]
-    return losses, optimizer, weights
+    return losses, optimizer, weights, loss_names
 
 
 def create_model(args, bidir, device, inshape, nb_gpus):
@@ -180,7 +184,7 @@ def create_data_generator(args):
     return generator
 
 
-def train(args, device, generator, losses, model, model_dir, optimizer, weights, writer):
+def train(args, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names):
     for epoch in range(args.initial_epoch, args.epochs):
 
         # save model checkpoint
@@ -223,15 +227,30 @@ def train(args, device, generator, losses, model, model_dir, optimizer, weights,
             print('  '.join((epoch_info, step_info, time_info, loss_info)), flush=True)
 
             # tensorboard logging
-            global_step = (epoch) * args.steps_per_epoch + step + 1
-            if global_step % args.display_freq == 1:
-                figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred[0].detach().cpu(),
-                                                       y_pred[-1].detach().cpu())
-                writer.add_figure(tag='volumes',
-                                  figure=figure,
-                                  global_step=epoch * args.steps_per_epoch + step + 1)
+            tensorboard_log(args, epoch, inputs, loss_list, loss_names, step, writer, y_pred, y_true)
     # final model save
     model.save(os.path.join(model_dir, '%04d.pt' % args.epochs))
+
+
+def tensorboard_log(args, epoch, inputs, loss_list, loss_names, step, writer: SummaryWriter, y_pred, y_true):
+    global_step = (epoch) * args.steps_per_epoch + step + 1
+    if global_step % args.display_freq == 1:
+        figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred[0].detach().cpu(),
+                                               y_pred[-1].detach().cpu())
+        writer.add_figure(tag='volumes',
+                          figure=figure,
+                          global_step=epoch * args.steps_per_epoch + step + 1)
+        loss_dict = {}
+        for name, value in zip(loss_names, list(map(float, loss_list))):
+            loss_dict[name] = value
+        writer.add_scalars(main_tag='loss', tag_scalar_dict=loss_dict, global_step=global_step)
+
+        fix_to_mov = torch.mean((y_true[0][y_true[0] != 0].cpu() - inputs[0][y_true[0] != 0].cpu()) ** 2)
+        fix_to_reg = torch.mean((y_true[0][y_true[0] != 0].cpu() - y_pred[0][y_true[0] != 0].detach().cpu()) ** 2)
+        diff_dict = {'Fix. to Mov.': fix_to_mov.item(),
+                     'Fix. to Reg.': fix_to_reg.item(),
+                     'SSD improvement': 1 - (fix_to_reg.item()/(fix_to_mov.item() + 1e-9))}
+        writer.add_scalars(main_tag='diffs', tag_scalar_dict=diff_dict, global_step=global_step)
 
 
 if __name__ == "__main__":

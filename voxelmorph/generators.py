@@ -29,7 +29,7 @@ def volgen_biobank(source_folder: str, img_pattern='T1_brain_affine_to_mni', seg
                    batch_size=1, return_segs=False, np_var='vol', target_shape=None, resize_factor=1, add_feat_axis=False):
     # convert glob path to filenames
 
-    assert os.path.isdir(source_folder), 'source folder is not a folder '
+    assert os.path.isdir(source_folder), f'{source_folder} is not a folder '
 
     vol_names = []
     for path in Path(source_folder).rglob(f'*{img_pattern}*'):

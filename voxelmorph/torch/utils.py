@@ -23,9 +23,9 @@ def fill_subplots(img: torch.Tensor, axs, img_name='', fontsize=6, cmap='gray'):
 def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.Tensor, deformation: torch.Tensor):
     nrow = 6
     ncol = 3
-    fig = plt.figure(figsize=(ncol + 1, nrow + 1))  # , constrained_layout=True)
+    fig = plt.figure(figsize=(2 * ncol + 1, 2 * nrow + 1))  # , constrained_layout=True)
     spec = gridspec.GridSpec(nrow, ncol, figure=fig,
-                             wspace=0.1, hspace=0.5,
+                             wspace=0.2, hspace=0.2,
                              top=1. - 0.5 / (nrow + 1), bottom=0.5 / (nrow + 1),
                              left=0.5 / (ncol + 1), right=1 - 0.5 / (ncol + 1))
     # spec = fig.add_gridspec(ncols=3, nrows=5, width_ratios=[0.5]*3, height_ratios=[1]*5)
@@ -46,5 +46,6 @@ def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.T
     fill_subplots(fixed - moving, axs=axs[2, :], img_name='Fix-Mov')
     fill_subplots(registered, axs=axs[3, :], img_name='Registered')
     fill_subplots(fixed - registered, axs=axs[4, :], img_name='Fix-Reg')
-    fill_subplots((deformation + 10) / 20, axs=axs[5, :], img_name='Def.', cmap=None)
+    deform_ = (deformation + 5) / 10
+    fill_subplots(deform_, axs=axs[5, :], img_name='Def.', cmap=None)
     return fig
