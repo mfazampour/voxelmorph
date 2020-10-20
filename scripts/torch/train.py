@@ -44,7 +44,7 @@ def main():
     generator = create_data_generator(args)
 
     # extract shape from sampled input
-    inshape = next(generator)[0][0].shape[1:-1]
+    inshape = args.inshape
     # prepare model folder
     model_dir = args.model_dir
     os.makedirs(model_dir, exist_ok=True)
@@ -155,17 +155,17 @@ def parse_args():
                         help='image reconstruction loss - can be mse or ncc (default: mse)')
     parser.add_argument('--lambda', type=float, dest='weight', default=0.01,
                         help='weight of deformation loss (default: 0.01)')
-    parser.add_argument('--use-biobank', action='store_true', help='set to True if using biobank data')
     parser.add_argument('--inshape', type=int, nargs='+',
                         help='after cropping shape of input. '
                              'default is equal to image size. specify if the input can\'t path through UNet')
     parser.add_argument('--log-dir', type=str, default=None, help='folder for tensorboard logs')
     parser.add_argument('--display_freq', type=int, default=20, help='frequency of plotting results in tensorboard')
+    parser.add_argument('--loader_name', type=str, default='default', help='volume generator function to use')
     return parser
 
 
 def create_data_generator(args):
-    if args.use_biobank:
+    if args.loader_name is not 'default':
         train_vol_names = args.datadir
     else:
         # load and prepare training data
@@ -185,7 +185,7 @@ def create_data_generator(args):
         # scan-to-scan generator
         generator = vxm.generators.scan_to_scan(train_vol_names, batch_size=args.batch_size,
                                                 bidir=args.bidir, add_feat_axis=add_feat_axis,
-                                                use_biobank=args.use_biobank, target_shape=args.inshape)
+                                                loader_name=args.loader_name, target_shape=args.inshape)
     return generator
 
 
@@ -203,11 +203,12 @@ def train(args, device, generator, losses, model, model_dir, optimizer, weights,
 
             # generate inputs (and true outputs) and convert them to tensors
             inputs, y_true = next(generator)
-            inputs = [torch.from_numpy(d).to(device).float().permute(0, 4, 1, 2, 3) for d in inputs]
-            y_true = [torch.from_numpy(d).to(device).float().permute(0, 4, 1, 2, 3) for d in y_true]
-            # if should_crop:
-            #     inputs = [t[:, :, :inshape[0], :inshape[1], :inshape[2]] for t in inputs]
-            #     y_true = [t[:, :, :inshape[0], :inshape[1], :inshape[2]] for t in y_true]
+            if not isinstance(inputs[0], torch.Tensor):
+                inputs = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in inputs]
+                y_true = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in y_true]
+
+            inputs = [t.to(device) for t in inputs]
+            y_true = [t.to(device) for t in y_true]
 
             # run inputs through the model to produce a warped image and flow field
             y_pred = model(*inputs)

@@ -12,8 +12,11 @@ from torchio.transforms import (
     OneOf,
     CropOrPad,
     Pad,
-    RandomFlip
+    RandomFlip,
+    Resample,
+    Crop
 )
+import torch
 
 from . import py
 
@@ -25,8 +28,10 @@ def biobank_transform(target_shape=None, min_value=0, max_value=1):
         transforms.append(CropOrPad(target_shape=target_shape))
     return Compose(transforms)
 
+
 def volgen_biobank(source_folder: str, img_pattern='T1_brain_affine_to_mni', seg_pattern='T1_brain_seg_affine_to_mni',
-                   batch_size=1, return_segs=False, np_var='vol', target_shape=None, resize_factor=1, add_feat_axis=False):
+                   batch_size=1, return_segs=False, np_var='vol', target_shape=None, resize_factor=1,
+                   add_feat_axis=False):
     # convert glob path to filenames
 
     assert os.path.isdir(source_folder), f'{source_folder} is not a folder '
@@ -54,21 +59,106 @@ def volgen_biobank(source_folder: str, img_pattern='T1_brain_affine_to_mni', seg
 
         # optionally load segmentations and concatenate
         if return_segs:
-            segs = [np.expand_dims(transform(py.utils.load_volfile(seg_names[i], **load_params)), axis=-1) for i in indices]
+            segs = [np.expand_dims(transform(py.utils.load_volfile(seg_names[i], **load_params)), axis=-1) for i in
+                    indices]
             vols.append(np.concatenate(segs, axis=0))
+
+        yield tuple(vols)
+
+
+def prostate_transforms(min_size, input_size):
+    # Let's use one preprocessing transform and one augmentation transform
+    # This transform will be applied only to scalar images:
+    rescale = RescaleIntensity((0, 1))
+    transforms = [rescale]
+    # As RandomAffine is faster then RandomElasticDeformation, we choose to
+    # apply RandomAffine 80% of the times and RandomElasticDeformation the rest
+    # Also, there is a 25% chance that none of them will be applied
+    # if self.opt.isTrain:
+    #     spatial = OneOf(
+    #         {RandomAffine(translation=5): 0.8, RandomElasticDeformation(): 0.2},
+    #         p=0.75,
+    #     )
+    #     transforms += [RandomFlip(axes=(0, 2), p=0.8), spatial]
+
+    ratio = min_size / np.max(input_size)
+    transforms.append(Resample(ratio))
+    transforms.append(CropOrPad(input_size))
+    transform = Compose(transforms)
+    return transform
+
+
+def read_list_of_patients(root):
+    patients = []
+    for root, dirs, files in os.walk(root):
+        if ('nonrigid' in root) or ('cropped' not in root):
+            continue
+        patients.append(root)
+    return patients
+
+
+def load_subject_(index, patients, subjects, load_mask=False):
+    sample = patients[index % len(patients)]
+
+    # load mr and turs file if it hasn't already been loaded
+    if sample not in subjects:
+        # print(f'loading patient {sample}')
+        if load_mask:
+            subject = torchio.Subject(mr=torchio.ScalarImage(sample + "/mr.mhd"),
+                                      trus=torchio.ScalarImage(sample + "/trus.mhd"),
+                                      mr_tree=torchio.LabelMap(sample + "/mr_tree.mhd"))
+        else:
+            subject = torchio.Subject(mr=torchio.ScalarImage(sample + "/mr.mhd"),
+                                      trus=torchio.Image(sample + "/trus.mhd"))
+        subjects[sample] = subject
+    subject = subjects[sample]
+    return sample, subject
+
+
+def volgen_prostate(source_folder: str, img_pattern='T1_brain_affine_to_mni', seg_pattern='T1_brain_seg_affine_to_mni',
+                    batch_size=1, return_segs=False, np_var='vol', target_shape=None):
+    # convert glob path to filenames
+    if target_shape is None:
+        target_shape = [128, 128, 128]
+    assert os.path.isdir(source_folder), f'{source_folder} is not a folder '
+
+    patients = read_list_of_patients(source_folder)
+    subjects = {}
+
+    min_size = 64
+    transform = prostate_transforms(min_size, target_shape)
+
+    while True:
+        # generate [batchsize] random image indices
+        indices = np.random.randint(len(patients), size=batch_size)
+        imgs = []
+        for index in indices:
+            sample, subject = load_subject_(index, patients, subjects, load_mask=return_segs)
+            transformed_ = transform(subject)
+            a = transformed_['mr'].data[:, :target_shape[0], :target_shape[1], :target_shape[2]]
+            b = transformed_['trus'].data[:, :target_shape[0], :target_shape[1], :target_shape[2]]
+
+            imgs.append(torch.cat([a, b], dim=0).unsqueeze(dim=0))
+        vols = [torch.cat(imgs, dim=0)]
+
+        # # optionally load segmentations and concatenate
+        # if return_segs:
+        #     segs = [np.expand_dims(transform(py.utils.load_volfile(seg_names[i], **load_params)), axis=-1) for i in
+        #             indices]
+        #     vols.append(np.concatenate(segs, axis=0))
 
         yield tuple(vols)
 
 
 def volgen(
         vol_names,
-        batch_size=1, 
+        batch_size=1,
         return_segs=False,
         np_var='vol',
         pad_shape=None,
         resize_factor=1,
         add_feat_axis=True
-    ):
+):
     """
     Base generator for random volume loading. Volumes can be passed as a path to
     the parent directory, a glob pattern or a list of file paths. Corresponding
@@ -111,41 +201,53 @@ def volgen(
         yield tuple(vols)
 
 
-def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=False, use_biobank=False, **kwargs):
+def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=False, loader_name='default', **kwargs):
     """
     Generator for scan-to-scan registration.
 
     Parameters:
-        use_biobank: Modified generator for loading biobank MR data to train voxelmorph
+        loader_name: Modified generator for using specific volume generator instead of the default one
         vol_names: List of volume files to load.
         bidir: Yield input image as output for bidirectional models. Default is False.
-        batch_size: Batch size. Default is 1.
+        batch_size: Batch size. Default is 1. TODO: as of now it seems only batch_size=1 is supported.
         prob_same: Induced probability that source and target inputs are the same. Default is 0.
         no_warp: Excludes null warp in output list if set to True (for affine training). Default if False.
         kwargs: Forwarded to the internal volgen generator.
     """
     zeros = None
 
-    if use_biobank:
+    if loader_name == 'biobank':
         gen = volgen_biobank(vol_names, batch_size=batch_size, **kwargs)
+    elif loader_name == 'prostate':
+        gen = volgen_prostate(vol_names)
     else:
         gen = volgen(vol_names, batch_size=batch_size, **kwargs)
 
     while True:
-        scan1 = next(gen)[0]
-        scan2 = next(gen)[0]
+        if loader_name == 'prostate':
+            scan = next(gen)[0]
+            scan1 = scan[:, 0:1, ...]
+            scan2 = scan[:, 1:2, ...]
 
-        # some induced chance of making source and target equal
-        if prob_same > 0 and np.random.rand() < prob_same:
-            if np.random.rand() > 0.5:
-                scan1 = scan2
-            else:
-                scan2 = scan1
+            # cache zeros
+            if not no_warp and zeros is None:
+                shape = scan1.shape[1:-1]
+                zeros = torch.zeros((batch_size, *shape, len(shape)), dtype=scan1.dtype)
+        else:
+            scan1 = next(gen)[0]
+            scan2 = next(gen)[0]
 
-        # cache zeros
-        if not no_warp and zeros is None:
-            shape = scan1.shape[1:-1]
-            zeros = np.zeros((batch_size, *shape, len(shape)))
+            # some induced chance of making source and target equal
+            if prob_same > 0 and np.random.rand() < prob_same:
+                if np.random.rand() > 0.5:
+                    scan1 = scan2
+                else:
+                    scan2 = scan1
+
+            # cache zeros
+            if not no_warp and zeros is None:
+                shape = scan1.shape[1:-1]
+                zeros = np.zeros((batch_size, *shape, len(shape)))
 
         invols = [scan1, scan2]
         outvols = [scan2, scan1] if bidir else [scan2]
