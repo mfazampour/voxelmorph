@@ -68,12 +68,17 @@ def optimizers(args, bidir, model):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     # prepare image loss
     loss_names = []
+    available_loss_images = ['ncc', 'mse', 'ssim', 'mind']
     if args.image_loss == 'ncc':
         image_loss_func = vxm.losses.NCC().loss
     elif args.image_loss == 'mse':
         image_loss_func = vxm.losses.MSE().loss
+    elif args.image_loss == 'ssim':
+        image_loss_func = vxm.losses.SSIM().loss
+    elif args.image_loss == 'mind':
+        image_loss_func = vxm.losses.MIND().loss
     else:
-        raise ValueError('Image loss should be "mse" or "ncc", but found "%s"' % args.image_loss)
+        raise ValueError(f'Image loss should be among {available_loss_images}, but found {args.image_loss}')
     # need two image loss functions if bidirectional
     if bidir:
         losses = [image_loss_func, image_loss_func]
@@ -208,7 +213,7 @@ def train(args, device, generator, losses, model, model_dir, optimizer, weights,
             y_pred = model(*inputs)
 
             # calculate total loss
-            loss = 0
+            loss = torch.tensor([0], dtype=torch.float).to(device)
             loss_list = []
             for n, loss_function in enumerate(losses):
                 curr_loss = loss_function(y_true[n], y_pred[n]) * weights[n]
@@ -229,17 +234,18 @@ def train(args, device, generator, losses, model, model_dir, optimizer, weights,
             print('  '.join((epoch_info, step_info, time_info, loss_info)), flush=True)
 
             # tensorboard logging
-            tensorboard_log(args, epoch, inputs, loss_list, loss_names, step, writer, y_pred, y_true, ssim=ssim)
+            tensorboard_log(args, epoch, inputs, loss_list, loss_names, step, writer,
+                            y_pred[0].detach(), y_true, y_pred[-1].detach(), ssim=ssim)
     # final model save
     model.save(os.path.join(model_dir, '%04d.pt' % args.epochs))
 
 
 def tensorboard_log(args, epoch, inputs, loss_list, loss_names, step,
-                    writer: SummaryWriter, y_pred, y_true, ssim: vxm.losses.SSIM = None):
+                    writer: SummaryWriter, y_pred, y_true, ddf, ssim: vxm.losses.SSIM = None):
     global_step = (epoch) * args.steps_per_epoch + step + 1
     if global_step % args.display_freq == 1:
-        figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred[0].detach().cpu(),
-                                               y_pred[-1].detach().cpu())
+        figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred.cpu(),
+                                               ddf.cpu())
         writer.add_figure(tag='volumes',
                           figure=figure,
                           global_step=epoch * args.steps_per_epoch + step + 1)
@@ -248,10 +254,10 @@ def tensorboard_log(args, epoch, inputs, loss_list, loss_names, step,
             loss_dict[name] = value
         writer.add_scalars(main_tag='loss', tag_scalar_dict=loss_dict, global_step=global_step)
 
-        fix_to_mov = torch.mean((y_true[0][y_true[0] != 0].cpu() - inputs[0][y_true[0] != 0].cpu()) ** 2)
-        fix_to_reg = torch.mean((y_true[0][y_true[0] != 0].cpu() - y_pred[0][y_true[0] != 0].detach().cpu()) ** 2)
+        fix_to_mov = torch.mean((y_true[0][y_true[0] != 0] - inputs[0][y_true[0] != 0]) ** 2).cpu()
+        fix_to_reg = torch.mean((y_true[0][y_true[0] != 0] - y_pred[y_true[0] != 0]) ** 2).cpu()
         ssim_mov = ssim.loss(y_true[0], inputs[0]).item()
-        ssim_reg = ssim.loss(y_true[0], y_pred[0]).item()
+        ssim_reg = ssim.loss(y_true[0], y_pred).item()
         ssim_increment = ssim_reg/(ssim_mov + 0.001) - 1
         diff_dict = {'Fix. to Mov.': fix_to_mov.item(),
                      'Fix. to Reg.': fix_to_reg.item(),
