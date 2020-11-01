@@ -23,8 +23,11 @@ from . import py
 
 
 def biobank_transform(target_shape=None, min_value=0, max_value=1):
-    rescale = RescaleIntensity((min_value, max_value))
-    transforms = [rescale]
+    if min_value is None:
+        transforms = []
+    else:
+        rescale = RescaleIntensity((min_value, max_value))
+        transforms = [rescale]
     if target_shape is not None:
         transforms.append(CropOrPad(target_shape=target_shape))
     return Compose(transforms)
@@ -63,14 +66,17 @@ def create_patient_list(img_pattern, patient_list_src, source_folder):
     file.close()
 
 
-def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True, img_pattern='T1_affine_to_mni.nii.gz', seg_pattern='T1_brain_seg_affine_to_mni.nii.gz',
-                   batch_size=1, return_segs=False, np_var='vol', target_shape=None, resize_factor=1, add_feat_axis=False):
+def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True,
+                   img_pattern='T1_affine_to_mni.nii.gz', seg_pattern='T1_first_all_fast_firstseg_affine_to_mni.nii.gz',
+                   batch_size=1, return_segs=False, np_var='vol',
+                   target_shape=None, resize_factor=1, add_feat_axis=False):
     # convert glob path to filenames
 
     assert os.path.isdir(source_folder), f'{source_folder} is not a folder '
 
     vol_names, seg_names = load_vol_pathes(patient_list_src, source_folder, img_pattern=img_pattern, seg_pattern=seg_pattern, is_train=is_train)
     transform = biobank_transform(target_shape)
+    transform_seg = biobank_transform(target_shape, min_value=None)
 
     while True:
         # generate [batchsize] random image indices
@@ -84,7 +90,7 @@ def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True, img
 
         # optionally load segmentations and concatenate
         if return_segs:
-            segs = [np.expand_dims(transform(py.utils.load_volfile(seg_names[i], **load_params)), axis=-1) for i in
+            segs = [np.expand_dims(transform_seg(py.utils.load_volfile(seg_names[i], **load_params)), axis=-1) for i in
                     indices]
             vols.append(np.concatenate(segs, axis=0))
 
@@ -226,7 +232,8 @@ def volgen(
         yield tuple(vols)
 
 
-def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=False, loader_name='default', **kwargs):
+def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=False,
+                 return_segs=False, loader_name='default', **kwargs):
     """
     Generator for scan-to-scan registration.
 
@@ -242,13 +249,16 @@ def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=Fals
     zeros = None
 
     if loader_name == 'biobank':
-        gen = volgen_biobank(source_folder=vol_names, batch_size=batch_size, **kwargs)
+        gen = volgen_biobank(source_folder=vol_names, batch_size=batch_size, return_segs=return_segs, **kwargs)
     elif loader_name == 'prostate':
-        gen = volgen_prostate(vol_names)
+        gen = volgen_prostate(source_folder=vol_names)
     else:
         gen = volgen(vol_names, batch_size=batch_size, **kwargs)
 
     while True:
+        seg1 = None
+        seg2 = None
+
         if loader_name == 'prostate':
             scan = next(gen)[0]
             scan1 = scan[:, 0:1, ...]
@@ -259,8 +269,15 @@ def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=Fals
                 shape = scan1.shape[1:-1]
                 zeros = torch.zeros((batch_size, *shape, len(shape)), dtype=scan1.dtype)
         else:
-            scan1 = next(gen)[0]
-            scan2 = next(gen)[0]
+            data1 = next(gen)
+            data2 = next(gen)
+
+            scan1 = data1[0]
+            scan2 = data2[0]
+
+            if return_segs:
+                seg1 = data1[1]
+                seg2 = data2[1]
 
             # some induced chance of making source and target equal
             if prob_same > 0 and np.random.rand() < prob_same:
@@ -278,6 +295,10 @@ def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=Fals
         outvols = [scan2, scan1] if bidir else [scan2]
         if not no_warp:
             outvols.append(zeros)
+
+        if seg1 is not None:
+            invols.append(seg1)
+            outvols.append(seg2)
 
         yield (invols, outvols)
 
