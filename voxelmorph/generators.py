@@ -35,17 +35,7 @@ def load_vol_pathes(patient_list_src: str, source_folder: str, img_pattern, seg_
     else:
         patient_list_file = os.path.join(patient_list_src, 'test.txt')
     if not os.path.isfile(patient_list_file):
-        patient_list = []
-        for path in Path(source_folder).rglob(f'*{img_pattern}*'):
-            patient_list.append(str(path.parent) + "\n")
-        random.shuffle(patient_list)
-        index_train = int(len(patient_list) * 0.8)
-        file = open(patient_list_src + 'train.txt', 'w')
-        file.writelines(patient_list[:index_train])
-        file.close()
-        file = open(patient_list_src + 'test.txt', 'w')
-        file.writelines(patient_list[index_train:])
-        file.close()
+        create_patient_list(img_pattern, patient_list_src, source_folder)
 
     # read folder names from file
     file = open(patient_list_file, 'r')
@@ -54,6 +44,20 @@ def load_vol_pathes(patient_list_src: str, source_folder: str, img_pattern, seg_
         vol_names.append(os.path.join(line, img_pattern))
         seg_names.append(os.path.join(line, seg_pattern))
     return vol_names, seg_names
+
+
+def create_patient_list(img_pattern, patient_list_src, source_folder):
+    patient_list = []
+    for path in Path(source_folder).rglob(f'*{img_pattern}*'):
+        patient_list.append(str(path.parent) + "\n")
+    random.shuffle(patient_list)
+    index_train = int(len(patient_list) * 0.8)
+    file = open(patient_list_src + 'train.txt', 'w')
+    file.writelines(patient_list[:index_train])
+    file.close()
+    file = open(patient_list_src + 'test.txt', 'w')
+    file.writelines(patient_list[index_train:])
+    file.close()
 
 
 def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True, img_pattern='T1_affine_to_mni.nii.gz', seg_pattern='T1_brain_seg_affine_to_mni.nii.gz',
