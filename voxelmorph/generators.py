@@ -2,6 +2,7 @@ import os
 import sys
 import glob
 import numpy as np
+import random
 from pathlib import Path
 import torchio
 from torchio.transforms import (
@@ -25,21 +26,43 @@ def biobank_transform(target_shape=None, min_value=0, max_value=1):
         transforms.append(CropOrPad(target_shape=target_shape))
     return Compose(transforms)
 
-def volgen_biobank(source_folder: str, img_pattern='T1_brain_affine_to_mni', seg_pattern='T1_brain_seg_affine_to_mni',
+
+def load_vol_pathes(patient_list_src: str, source_folder: str, img_pattern, seg_pattern, is_train: True):
+    vol_names = []
+    seg_names = []
+    if is_train:
+        patient_list_file = os.path.join(patient_list_src, 'train.txt')
+    else:
+        patient_list_file = os.path.join(patient_list_src, 'test.txt')
+    if not os.path.isfile(patient_list_file):
+        patient_list = []
+        for path in Path(source_folder).rglob(f'*{img_pattern}*'):
+            patient_list.append(str(path.parent) + "\n")
+        random.shuffle(patient_list)
+        index_train = int(len(patient_list) * 0.8)
+        file = open(patient_list_src + 'train.txt', 'w')
+        file.writelines(patient_list[:index_train])
+        file.close()
+        file = open(patient_list_src + 'test.txt', 'w')
+        file.writelines(patient_list[index_train:])
+        file.close()
+
+    # read folder names from file
+    file = open(patient_list_file, 'r')
+    lines = file.read().splitlines()
+    for line in lines:
+        vol_names.append(os.path.join(line, img_pattern))
+        seg_names.append(os.path.join(line, seg_pattern))
+    return vol_names, seg_names
+
+
+def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True, img_pattern='T1_affine_to_mni.nii.gz', seg_pattern='T1_brain_seg_affine_to_mni.nii.gz',
                    batch_size=1, return_segs=False, np_var='vol', target_shape=None, resize_factor=1, add_feat_axis=False):
     # convert glob path to filenames
 
     assert os.path.isdir(source_folder), f'{source_folder} is not a folder '
 
-    vol_names = []
-    for path in Path(source_folder).rglob(f'*{img_pattern}*'):
-        vol_names.append(str(path))
-
-    seg_names = []
-    if return_segs:
-        for path in Path(source_folder).rglob(f'*{seg_pattern}*'):
-            seg_names.append(str(path))
-
+    vol_names, seg_names = load_vol_pathes(patient_list_src, source_folder, img_pattern=img_pattern, seg_pattern=seg_pattern, is_train=is_train)
     transform = biobank_transform(target_shape)
 
     while True:
@@ -127,7 +150,7 @@ def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=Fals
     zeros = None
 
     if use_biobank:
-        gen = volgen_biobank(vol_names, batch_size=batch_size, **kwargs)
+        gen = volgen_biobank(source_folder=vol_names, batch_size=batch_size, **kwargs)
     else:
         gen = volgen(vol_names, batch_size=batch_size, **kwargs)
 

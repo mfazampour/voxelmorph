@@ -161,6 +161,8 @@ def parse_args():
                              'default is equal to image size. specify if the input can\'t path through UNet')
     parser.add_argument('--log-dir', type=str, default=None, help='folder for tensorboard logs')
     parser.add_argument('--display_freq', type=int, default=20, help='frequency of plotting results in tensorboard')
+    parser.add_argument('--patient_list_src', type=str, default='/tmp/',
+                        help='directory to store patient list for training and testing')
     return parser
 
 
@@ -185,7 +187,8 @@ def create_data_generator(args):
         # scan-to-scan generator
         generator = vxm.generators.scan_to_scan(train_vol_names, batch_size=args.batch_size,
                                                 bidir=args.bidir, add_feat_axis=add_feat_axis,
-                                                use_biobank=args.use_biobank, target_shape=args.inshape)
+                                                use_biobank=args.use_biobank, target_shape=args.inshape,
+                                                patient_list_src=args.patient_list_src)
     return generator
 
 
