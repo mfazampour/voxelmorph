@@ -248,7 +248,7 @@ def train(args, device, generator, losses, model, model_dir, optimizer, weights,
     model.save(os.path.join(model_dir, '%04d.pt' % args.epochs))
 
 
-def apply_model(model, generator, device, losses, weights, is_test=False, has_seg=False):
+def apply_model(model, generator, device, losses=None, weights=None, is_test=False, has_seg=False):
     # generate inputs (and true outputs) and convert them to tensors
     inputs, y_true = next(generator)
     if not isinstance(inputs[0], torch.Tensor):
