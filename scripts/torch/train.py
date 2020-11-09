@@ -40,7 +40,7 @@ def main():
     # tensorboard
     if args.log_dir is None:
         args.log_dir = args.model_dir
-    writer = SummaryWriter(log_dir=f'{args.log_dir}/{datetime.now().strftime("%m.%d.%Y_%H.%M")}')
+    writer = SummaryWriter(log_dir=f'{args.log_dir}/{datetime.now().strftime("%d.%m.%Y_%H.%M")}')
 
     generator = create_data_generator(args)
 
@@ -61,73 +61,12 @@ def main():
 
     model = create_model(args, bidir, device, inshape, nb_gpus)
 
-    losses, optimizer, weights, loss_names = optimizers(args, bidir, model)
+    losses, optimizer, weights, loss_names = create_optimizers(args, bidir, model)
     # training loops
     train(args, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names, test_generator)
 
 
-def optimizers(args, bidir, model):
-    # set optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    # prepare image loss
-    loss_names = []
-    available_loss_images = ['ncc', 'mse', 'ssim', 'mind']
-    if args.image_loss == 'ncc':
-        image_loss_func = vxm.losses.NCC().loss
-    elif args.image_loss == 'mse':
-        image_loss_func = vxm.losses.MSE().loss
-    elif args.image_loss == 'ssim':
-        image_loss_func = vxm.losses.SSIM().loss
-    elif args.image_loss == 'mind':
-        image_loss_func = vxm.losses.MIND().loss
-    else:
-        raise ValueError(f'Image loss should be among {available_loss_images}, but found {args.image_loss}')
-    # need two image loss functions if bidirectional
-    if bidir:
-        losses = [image_loss_func, image_loss_func]
-        loss_names += [args.image_loss, args.image_loss]
-        weights = [0.5, 0.5]
-    else:
-        losses = [image_loss_func]
-        loss_names += [args.image_loss]
-        weights = [1]
-    # prepare deformation loss
-    losses += [vxm.losses.Grad('l2', loss_mult=args.int_downsize).loss]
-    loss_names += 'Regularization'
-    weights += [args.weight]
-    return losses, optimizer, weights, loss_names
-
-
-def create_model(args, bidir, device, inshape, nb_gpus):
-    # enabling cudnn determinism appears to speed up training by a lot
-    torch.backends.cudnn.deterministic = not args.cudnn_nondet
-    # unet architecture
-    enc_nf = args.enc if args.enc else [16, 32, 32, 32]
-    dec_nf = args.dec if args.dec else [32, 32, 32, 32, 32, 16, 16]
-    if args.load_model:
-        # load initial model (if specified)
-        model = vxm.networks.VxmDense.load(args.load_model, device)
-    else:
-        # otherwise configure new model
-        model = vxm.networks.VxmDense(
-            inshape=inshape,
-            nb_unet_features=[enc_nf, dec_nf],
-            bidir=bidir,
-            int_steps=args.int_steps,
-            int_downsize=args.int_downsize
-        )
-    if nb_gpus > 1:
-        # use multiple GPUs via DataParallel
-        model = torch.nn.DataParallel(model)
-        model.save = model.module.save
-    # prepare the model for training and send to device
-    model.to(device)
-    model.train()
-    return model
-
-
-def parse_args():
-    global parser
+def parse_args() -> argparse.ArgumentParser:
     # parse the commandline
     parser = argparse.ArgumentParser()
     # data organization parameters
@@ -168,6 +107,9 @@ def parse_args():
                         help='directory to store patient list for training and testing')
     parser.add_argument('--load_segmentation', action='store_true', default=False,
                         help='use segmentation data for training the network (torch functionality seems to be missing)')
+    parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
+    parser.add_argument('--kl-lambda', type=float, default=10,
+                        help='prior lambda regularization for KL loss (default: 10)')
     return parser
 
 
@@ -200,6 +142,72 @@ def create_data_generator(args, is_train=True):
                                                 return_segs=return_segs,
                                                 patient_list_src=args.patient_list_src, is_train=is_train)
     return generator
+
+
+def create_model(args, bidir, device, inshape, nb_gpus):
+    # enabling cudnn determinism appears to speed up training by a lot
+    torch.backends.cudnn.deterministic = not args.cudnn_nondet
+    # unet architecture
+    enc_nf = args.enc if args.enc else [16, 32, 32, 32]
+    dec_nf = args.dec if args.dec else [32, 32, 32, 32, 32, 16, 16]
+    if args.load_model:
+        # load initial model (if specified)
+        model = vxm.networks.VxmDense.load(args.load_model, device)
+    else:
+        # otherwise configure new model
+        model = vxm.networks.VxmDense(
+            inshape=inshape,
+            nb_unet_features=[enc_nf, dec_nf],
+            bidir=bidir,
+            int_steps=args.int_steps,
+            int_downsize=args.int_downsize,
+            use_probs=args.use_probs
+        )
+    if nb_gpus > 1:
+        # use multiple GPUs via DataParallel
+        model = torch.nn.DataParallel(model)
+        model.save = model.module.save
+    # prepare the model for training and send to device
+    model.to(device)
+    model.train()
+    return model
+
+
+def create_optimizers(args, bidir, model):
+    # set optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    # prepare image loss
+    loss_names = []
+    available_loss_images = ['ncc', 'mse', 'ssim', 'mind']
+    if args.image_loss == 'ncc':
+        image_loss_func = vxm.losses.NCC().loss
+    elif args.image_loss == 'mse':
+        image_loss_func = vxm.losses.MSE().loss
+    elif args.image_loss == 'ssim':
+        image_loss_func = vxm.losses.SSIM().loss
+    elif args.image_loss == 'mind':
+        image_loss_func = vxm.losses.MIND().loss
+    else:
+        raise ValueError(f'Image loss should be among {available_loss_images}, but found {args.image_loss}')
+    # need two image loss functions if bidirectional
+    if bidir:
+        losses = [image_loss_func, image_loss_func]
+        loss_names += [args.image_loss, args.image_loss]
+        weights = [0.5, 0.5]
+    else:
+        losses = [image_loss_func]
+        loss_names += [args.image_loss]
+        weights = [1]
+
+    # prepare deformation loss
+    if args.use_probs:
+        losses += [vxm.losses.KL(args.kl_lambda).loss]
+        loss_names += 'KL'
+    else:
+        losses += [vxm.losses.Grad('l2', loss_mult=args.int_downsize).loss]
+        loss_names += 'Regularization'
+    weights += [args.weight]
+    return losses, optimizer, weights, loss_names
 
 
 def train(args, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names, test_generator):
@@ -306,29 +314,30 @@ def evaluate_with_segmentation(args, model, test_generator, device, writer: Summ
 
 
 def calc_dice(device, model, resizer, test_generator, transformer):
-    inputs, y_true = next(test_generator)
-    if not isinstance(inputs[0], torch.Tensor):
-        inputs = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in inputs]
-        y_true = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in y_true]
-    inputs = [t.to(device) for t in inputs]
-    y_true = [t.to(device) for t in y_true]
-    seg_fixed = y_true[-1]
-    seg_moving = inputs[-1]
-    inputs = inputs[:2]  # to match training stage that we have a list of two input
-    # run inputs through the model to produce a warped image and flow field
-    y_pred = model(*inputs)
-    dvf = resizer(y_pred[-1].detach())
-    morphed = transformer(seg_moving, dvf)
-    len_segs = len(seg_fixed.unique())
-    shape = list(seg_fixed.shape)
-    shape[1] = len_segs
-    one_hot_fixed = torch.zeros(shape, device=device)
-    one_hot_morphed = torch.zeros(shape, device=device)
-    for i, (val) in enumerate(seg_fixed.unique()):
-        one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
-        one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
-    dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False)
-    return dice_score
+    with torch.no_grad():
+        inputs, y_true = next(test_generator)
+        if not isinstance(inputs[0], torch.Tensor):
+            inputs = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in inputs]
+            y_true = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in y_true]
+        inputs = [t.to(device) for t in inputs]
+        y_true = [t.to(device) for t in y_true]
+        seg_fixed = y_true[-1]
+        seg_moving = inputs[-1]
+        inputs = inputs[:2]  # to match training stage that we have a list of two input
+        # run inputs through the model to produce a warped image and flow field
+        y_pred = model(*inputs, registration=True)
+        dvf = y_pred[-1].detach()
+        morphed = transformer(seg_moving, dvf)
+        len_segs = len(seg_fixed.unique())
+        shape = list(seg_fixed.shape)
+        shape[1] = len_segs
+        one_hot_fixed = torch.zeros(shape, device=device)
+        one_hot_morphed = torch.zeros(shape, device=device)
+        for i, (val) in enumerate(seg_fixed.unique()):
+            one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
+            one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
+        dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False)
+        return dice_score
 
 
 if __name__ == "__main__":

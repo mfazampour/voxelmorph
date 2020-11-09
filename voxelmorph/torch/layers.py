@@ -95,3 +95,38 @@ class ResizeTransform(nn.Module):
 
         # don't do anything if resize is 1
         return x
+
+
+##########################################
+## Stochastic Sampling layers
+##########################################
+
+class SampleNormalLogVar(nn.Module):
+    """
+    Gaussian sample given mean and log_variance
+
+    inputs: list of Tensors [mu, log_var]
+    outputs: Tensor sample from N(mu, sigma^2)
+    """
+
+    def __init__(self):
+        super(SampleNormalLogVar, self).__init__()
+
+    def forward(self, x) -> torch.Tensor:
+        return self._sample(x)
+
+    def _sample(self, args):
+        """
+        sample from a normal distribution
+        args should be [mu, log_var], where log_var is the log of the squared sigma
+        This is probably equivalent to
+            K.random_normal(shape, args[0], exp(args[1]/2.0))
+        """
+        mu, log_var = args
+
+        # sample from N(0, 1)
+        noise = torch.normal(0, 1, size=mu.shape, dtype=torch.float32, device=mu.device)
+
+        # make it a sample from N(mu, sigma^2)
+        z = mu + torch.exp(log_var / 2.0) * noise
+        return z

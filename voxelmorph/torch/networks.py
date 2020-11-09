@@ -73,7 +73,7 @@ class Unet(nn.Module):
         for nf in self.dec_nf[len(self.enc_nf):]:
             self.extras.append(ConvBlock(ndims, prev_nf, nf, stride=1))
             prev_nf = nf
- 
+
     def forward(self, x):
 
         # get encoder activations
@@ -102,14 +102,14 @@ class VxmDense(LoadableModel):
 
     @store_config_args
     def __init__(self,
-        inshape,
-        nb_unet_features=None,
-        nb_unet_levels=None,
-        unet_feat_mult=1,
-        int_steps=7,
-        int_downsize=2,
-        bidir=False,
-        use_probs=False):
+                 inshape,
+                 nb_unet_features=None,
+                 nb_unet_levels=None,
+                 unet_feat_mult=1,
+                 int_steps=7,
+                 int_downsize=2,
+                 bidir=False,
+                 use_probs=False):
         """ 
         Parameters:
             inshape: Input shape. e.g. (192, 192, 192)
@@ -149,9 +149,17 @@ class VxmDense(LoadableModel):
         self.flow.weight = nn.Parameter(Normal(0, 1e-5).sample(self.flow.weight.shape))
         self.flow.bias = nn.Parameter(torch.zeros(self.flow.bias.shape))
 
-        # probabilities are not supported in pytorch
+        self.use_probs = use_probs
+        # optionally include probabilities
         if use_probs:
-            raise NotImplementedError('Flow variance has not been implemented in pytorch - set use_probs to False')
+            # initialize the velocity variance very low, to start stable
+            self.flow_logsigma = Conv(self.unet_model.dec_nf[-1], ndims, kernel_size=3, padding=1)
+            self.flow_logsigma.weight = nn.Parameter(Normal(0, 1e-10).sample(self.flow.weight.shape))
+            self.flow_logsigma.bias = nn.Parameter(torch.ones(self.flow.bias.shape) * -10)
+
+        # # probabilities are not supported in pytorch
+        # if use_probs:
+        #     raise NotImplementedError('Flow variance has not been implemented in pytorch - set use_probs to False')
 
         # configure optional resize layers
         resize = int_steps > 0 and int_downsize > 1
@@ -181,7 +189,14 @@ class VxmDense(LoadableModel):
         x = self.unet_model(x)
 
         # transform into flow field
-        flow_field = self.flow(x)
+        if self.use_probs:
+            flow_mean = self.flow(x)
+            flow_logsigma = self.flow_logsigma(x)
+            flow_params = torch.cat([flow_mean, flow_logsigma])
+            flow_field = layers.SampleNormalLogVar()([flow_mean, flow_logsigma])
+        else:
+            flow_field = self.flow(x)
+            flow_params = None
 
         # resize flow for integration
         pos_flow = flow_field
@@ -208,8 +223,11 @@ class VxmDense(LoadableModel):
         y_target = self.transformer(target, neg_flow) if self.bidir else None
 
         # return non-integrated flow field if training
-        if not registration:
-            return (y_source, y_target, preint_flow) if self.bidir else (y_source, preint_flow)
+        if not registration:  # it's training
+            if self.use_probs:
+                return (y_source, y_target, flow_params) if self.bidir else (y_source, flow_params)
+            else:
+                return (y_source, y_target, preint_flow) if self.bidir else (y_source, preint_flow)
         else:
             return y_source, pos_flow
 
