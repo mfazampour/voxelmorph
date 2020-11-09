@@ -212,39 +212,16 @@ def create_optimizers(args, bidir, model):
 
 def train(args, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names, test_generator):
     ssim = vxm.losses.SSIM()
-
-    resizer = vxm.layers.ResizeTransform(0.5, ndims=3).to(device)
     transformer = vxm.layers.SpatialTransformer(size=args.inshape).to(device)
 
     for epoch in range(args.initial_epoch, args.epochs):
-
         # save model checkpoint
         model.save(os.path.join(model_dir, '%04d.pt' % epoch))
 
         for step in range(args.steps_per_epoch):
-
             step_start_time = time.time()
 
-            # generate inputs (and true outputs) and convert them to tensors
-            inputs, y_true = next(generator)
-            if not isinstance(inputs[0], torch.Tensor):
-                inputs = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in inputs]
-                y_true = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in y_true]
-
-            inputs = [t.to(device) for t in inputs]
-            y_true = [t.to(device) for t in y_true]
-
-            # run inputs through the model to produce a warped image and flow field
-            y_pred = model(*inputs)
-
-            # calculate total loss
-            loss = torch.tensor([0], dtype=torch.float).to(device)
-            loss_list = []
-            for n, loss_function in enumerate(losses):
-                curr_loss = loss_function(y_true[n], y_pred[n]) * weights[n]
-                loss_list.append('%.6f' % curr_loss.item())
-                loss += curr_loss
-
+            loss, loss_list, _, _, _ = apply_model(model, generator, device, losses, weights)
             loss_info = 'loss: %.6f  (%s)' % (loss.item(), ', '.join(loss_list))
 
             # backpropagate and optimize
@@ -261,27 +238,57 @@ def train(args, device, generator, losses, model, model_dir, optimizer, weights,
             # tensorboard logging & evaluation
             global_step = (epoch) * args.steps_per_epoch + step + 1
             if global_step % args.display_freq == 1:
-                tensorboard_log(args, epoch, inputs, loss_list, loss_names, step, writer,
-                                y_pred[0].detach(), y_true, y_pred[-1].detach(), ssim=ssim, global_step=global_step)
                 model.eval()
-                evaluate_with_segmentation(args, model, test_generator, device=device, writer=writer,
-                                           global_step=global_step, resizer=resizer, transformer=transformer)
+                tensorboard_log(model, test_generator, loss_names, device, loss_list, writer, ssim=ssim,
+                                global_step=global_step)
+                evaluate_with_segmentation(model, test_generator, device=device, writer=writer,
+                                           global_step=global_step, transformer=transformer)
                 model.train()
     # final model save
     model.save(os.path.join(model_dir, '%04d.pt' % args.epochs))
 
 
-def tensorboard_log(args, epoch, inputs, loss_list, loss_names, step,
-                    writer: SummaryWriter, y_pred, y_true, ddf, ssim: vxm.losses.SSIM = None, global_step=0):
+def apply_model(model, generator, device, losses, weights, is_test=False, has_seg=False):
+    # generate inputs (and true outputs) and convert them to tensors
+    inputs, y_true = next(generator)
+    if not isinstance(inputs[0], torch.Tensor):
+        inputs = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in inputs]
+        y_true = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in y_true]
+    inputs = [t.to(device) for t in inputs]
+    y_true = [t.to(device) for t in y_true]
+    # run inputs through the model to produce a warped image and flow field
+    if has_seg:
+        y_pred = model(*inputs[:-1], registration=is_test)
+    else:
+        y_pred = model(*inputs, registration=is_test)
+
+    if losses is None:
+        return inputs, y_true, y_pred
+    # calculate total loss
+    loss = torch.tensor([0], dtype=torch.float).to(device)
+    loss_list = []
+    for n, loss_function in enumerate(losses):
+        curr_loss = loss_function(y_true[n], y_pred[n]) * weights[n]
+        loss_list.append('%.6f' % curr_loss.item())
+        loss += curr_loss
+    return loss, loss_list, inputs, y_true, y_pred
+
+
+def tensorboard_log(model, test_generator, loss_names, device, loss_list,
+                    writer: SummaryWriter, ssim: vxm.losses.SSIM, global_step=0):
+    with torch.no_grad():
+        inputs, y_true, y_pred = apply_model(model=model, generator=test_generator, device=device,
+                                             is_test=True, has_seg=True)
+    ddf = y_pred[-1].detach()
+    y_pred = y_pred[0]
     figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred.cpu(),
                                            ddf.cpu())
     writer.add_figure(tag='volumes',
                       figure=figure,
-                      global_step=epoch * args.steps_per_epoch + step + 1)
-    loss_dict = {}
+                      global_step=global_step)
     for name, value in zip(loss_names, list(map(float, loss_list))):
-        loss_dict[name] = value
-    writer.add_scalars(main_tag='loss', tag_scalar_dict=loss_dict, global_step=global_step)
+        writer.add_scalar(f'loss/{name}', value, global_step=global_step)
+
 
     fix_to_mov = torch.mean((y_true[0][y_true[0] != 0] - inputs[0][y_true[0] != 0]) ** 2).cpu()
     fix_to_reg = torch.mean((y_true[0][y_true[0] != 0] - y_pred[y_true[0] != 0]) ** 2).cpu()
@@ -294,38 +301,39 @@ def tensorboard_log(args, epoch, inputs, loss_list, loss_names, step,
                  'SSIM Mov.': ssim_mov,
                  'SSIM Reg.': ssim_reg,
                  'SSIM increment': ssim_increment}
-    writer.add_scalars(main_tag='diffs', tag_scalar_dict=diff_dict, global_step=global_step)
+    for key in diff_dict:
+        writer.add_scalar(f'diffs/{key}', diff_dict[key], global_step=global_step)
 
 
-def evaluate_with_segmentation(args, model, test_generator, device, writer: SummaryWriter,
-                               resizer, transformer, num_of_vol=10, global_step=0):
+def evaluate_with_segmentation(model, test_generator, device, writer: SummaryWriter,
+                                transformer, num_of_vol=10, global_step=0):
     list_dice = []
+    real_vals = []
     for step in range(num_of_vol):
         print(step)
         # generate inputs (and true outputs) and convert them to tensors
-        dice_score = calc_dice(device, model, resizer, test_generator, transformer)
+        dice_score, real_vals = calc_dice(device, model, test_generator, transformer)
         list_dice.append(dice_score.cpu())
         torch.cuda.empty_cache()
 
     mean_dice = torch.cat(list_dice).mean(dim=0)
+    structures_dict = {0: 'backround',
+        10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
+        13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
+        18: 'left_amygdala', 26: 'left_accumbens', 49: 'right_thalamus',
+        50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
+        53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
     for i, (val) in enumerate(mean_dice):
-        writer.add_scalar(f'dice/seg {i}', scalar_value=val, global_step=global_step)
+        writer.add_scalar(f'dice/{structures_dict[int(real_vals[i])]}', scalar_value=val, global_step=global_step)
     print(torch.cat(list_dice).mean(dim=0))
 
 
-def calc_dice(device, model, resizer, test_generator, transformer):
+def calc_dice(device, model, test_generator, transformer):
     with torch.no_grad():
-        inputs, y_true = next(test_generator)
-        if not isinstance(inputs[0], torch.Tensor):
-            inputs = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in inputs]
-            y_true = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in y_true]
-        inputs = [t.to(device) for t in inputs]
-        y_true = [t.to(device) for t in y_true]
+        inputs, y_true, y_pred = apply_model(model=model, generator=test_generator, device=device,
+                                             is_test=True, has_seg=True)
         seg_fixed = y_true[-1]
         seg_moving = inputs[-1]
-        inputs = inputs[:2]  # to match training stage that we have a list of two input
-        # run inputs through the model to produce a warped image and flow field
-        y_pred = model(*inputs, registration=True)
         dvf = y_pred[-1].detach()
         morphed = transformer(seg_moving, dvf)
         len_segs = len(seg_fixed.unique())
@@ -333,11 +341,13 @@ def calc_dice(device, model, resizer, test_generator, transformer):
         shape[1] = len_segs
         one_hot_fixed = torch.zeros(shape, device=device)
         one_hot_morphed = torch.zeros(shape, device=device)
+        real_vals = []
         for i, (val) in enumerate(seg_fixed.unique()):
+            real_vals.append(val)
             one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
             one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
         dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False)
-        return dice_score
+        return dice_score, real_vals
 
 
 if __name__ == "__main__":
