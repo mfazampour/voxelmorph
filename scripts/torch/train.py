@@ -205,6 +205,9 @@ def create_data_generator(args, is_train=True):
 def train(args, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names, test_generator):
     ssim = vxm.losses.SSIM()
 
+    resizer = vxm.layers.ResizeTransform(0.5, ndims=3).to(device)
+    transformer = vxm.layers.SpatialTransformer(size=args.inshape).to(device)
+
     for epoch in range(args.initial_epoch, args.epochs):
 
         # save model checkpoint
@@ -247,13 +250,14 @@ def train(args, device, generator, losses, model, model_dir, optimizer, weights,
             time_info = 'time: %.2f sec' % (time.time() - step_start_time)
             print('  '.join((epoch_info, step_info, time_info, loss_info)), flush=True)
 
-            # tensorboard logging
+            # tensorboard logging & evaluation
             global_step = (epoch) * args.steps_per_epoch + step + 1
             if global_step % args.display_freq == 1:
                 tensorboard_log(args, epoch, inputs, loss_list, loss_names, step, writer,
                                 y_pred[0].detach(), y_true, y_pred[-1].detach(), ssim=ssim, global_step=global_step)
-
-                evaluate_with_segmentation(args, model, test_generator, device=device, writer=writer, global_step=global_step)
+                model.eval()
+                evaluate_with_segmentation(args, model, test_generator, device=device, writer=writer,
+                                           global_step=global_step, resizer=resizer, transformer=transformer)
                 model.train()
     # final model save
     model.save(os.path.join(model_dir, '%04d.pt' % args.epochs))
@@ -285,10 +289,8 @@ def tensorboard_log(args, epoch, inputs, loss_list, loss_names, step,
     writer.add_scalars(main_tag='diffs', tag_scalar_dict=diff_dict, global_step=global_step)
 
 
-def evaluate_with_segmentation(args, model, test_generator, device, writer: SummaryWriter, num_of_vol=10, global_step=0):
-    model.eval()
-    resizer = vxm.layers.ResizeTransform(0.5, ndims=3).to(device)
-    transformer = vxm.layers.SpatialTransformer(size=args.inshape).to(device)
+def evaluate_with_segmentation(args, model, test_generator, device, writer: SummaryWriter,
+                               resizer, transformer, num_of_vol=10, global_step=0):
     list_dice = []
     for step in range(num_of_vol):
         print(step)
