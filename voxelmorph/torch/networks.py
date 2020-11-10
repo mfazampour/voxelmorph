@@ -109,7 +109,8 @@ class VxmDense(LoadableModel):
                  int_steps=7,
                  int_downsize=2,
                  bidir=False,
-                 use_probs=False):
+                 use_probs=False,
+                 flow_logsigma_bias=-10):
         """ 
         Parameters:
             inshape: Input shape. e.g. (192, 192, 192)
@@ -123,6 +124,7 @@ class VxmDense(LoadableModel):
                 is not downsampled when this value is 1.
             bidir: Enable bidirectional cost function. Default is False.
             use_probs: Use probabilities in flow field. Default is False.
+            flow_logsigma_bias: negative value for initialization of the logsigma layer bias value
         """
         super().__init__()
 
@@ -155,7 +157,7 @@ class VxmDense(LoadableModel):
             # initialize the velocity variance very low, to start stable
             self.flow_logsigma = Conv(self.unet_model.dec_nf[-1], ndims, kernel_size=3, padding=1)
             self.flow_logsigma.weight = nn.Parameter(Normal(0, 1e-10).sample(self.flow.weight.shape))
-            self.flow_logsigma.bias = nn.Parameter(torch.ones(self.flow.bias.shape) * -10)
+            self.flow_logsigma.bias = nn.Parameter(torch.ones(self.flow.bias.shape) * flow_logsigma_bias)
 
         # # probabilities are not supported in pytorch
         # if use_probs:

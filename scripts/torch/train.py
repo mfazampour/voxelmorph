@@ -108,6 +108,8 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument('--load_segmentation', action='store_true', default=False,
                         help='use segmentation data for training the network (torch functionality seems to be missing)')
     parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
+    parser.add_argument('--flow-logsigma-bias', type=float, default=-10,
+                        help='negative value for initialization of the logsigma layer bias value')
     parser.add_argument('--kl-lambda', type=float, default=10,
                         help='prior lambda regularization for KL loss (default: 10)')
     return parser
@@ -161,7 +163,8 @@ def create_model(args, bidir, device, inshape, nb_gpus):
             bidir=bidir,
             int_steps=args.int_steps,
             int_downsize=args.int_downsize,
-            use_probs=args.use_probs
+            use_probs=args.use_probs,
+            flow_logsigma_bias=args.flow_logsigma_bias
         )
     if nb_gpus > 1:
         # use multiple GPUs via DataParallel
