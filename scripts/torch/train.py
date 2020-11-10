@@ -308,27 +308,28 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
 def evaluate_with_segmentation(model, test_generator, device, writer: SummaryWriter,
                                 transformer, num_of_vol=10, global_step=0):
     list_dice = []
-    real_vals = []
-    for step in range(num_of_vol):
-        print(step)
-        # generate inputs (and true outputs) and convert them to tensors
-        dice_score, real_vals = calc_dice(device, model, test_generator, transformer)
-        list_dice.append(dice_score.cpu())
-        torch.cuda.empty_cache()
-
-    mean_dice = torch.cat(list_dice).mean(dim=0)
+    # mask_values = [0, 10, 11, 12, 13, 16, 17, 18, 26, 49, 50, 51, 52, ]
     structures_dict = {0: 'backround',
         10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
         13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
         18: 'left_amygdala', 26: 'left_accumbens', 49: 'right_thalamus',
         50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
         53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
+    mask_values = list(structures_dict.keys())
+    for step in range(num_of_vol):
+        print(step)
+        # generate inputs (and true outputs) and convert them to tensors
+        dice_score = calc_dice(device, model, test_generator, transformer, mask_values)
+        list_dice.append(dice_score.cpu())
+        torch.cuda.empty_cache()
+
+    mean_dice = torch.cat(list_dice).mean(dim=0)
     for i, (val) in enumerate(mean_dice):
-        writer.add_scalar(f'dice/{structures_dict[int(real_vals[i])]}', scalar_value=val, global_step=global_step)
+        writer.add_scalar(f'dice/{structures_dict[int(mask_values[i])]}', scalar_value=val, global_step=global_step)
     print(torch.cat(list_dice).mean(dim=0))
 
 
-def calc_dice(device, model, test_generator, transformer):
+def calc_dice(device, model, test_generator, transformer, mask_values):
     with torch.no_grad():
         inputs, y_true, y_pred = apply_model(model=model, generator=test_generator, device=device,
                                              is_test=True, has_seg=True)
@@ -336,18 +337,15 @@ def calc_dice(device, model, test_generator, transformer):
         seg_moving = inputs[-1]
         dvf = y_pred[-1].detach()
         morphed = transformer(seg_moving, dvf)
-        len_segs = len(seg_fixed.unique())
         shape = list(seg_fixed.shape)
-        shape[1] = len_segs
+        shape[1] = len(mask_values)
         one_hot_fixed = torch.zeros(shape, device=device)
         one_hot_morphed = torch.zeros(shape, device=device)
-        real_vals = []
-        for i, (val) in enumerate(seg_fixed.unique()):
-            real_vals.append(val)
+        for i, (val) in enumerate(mask_values):
             one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
             one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
         dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False)
-        return dice_score, real_vals
+        return dice_score
 
 
 if __name__ == "__main__":
