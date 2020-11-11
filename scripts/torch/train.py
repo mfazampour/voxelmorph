@@ -329,7 +329,6 @@ def evaluate_with_segmentation(model, test_generator, device, writer: SummaryWri
     mean_dice = torch.cat(list_dice).mean(dim=0)
     for i, (val) in enumerate(mean_dice):
         writer.add_scalar(f'dice/{structures_dict[int(mask_values[i])]}', scalar_value=val, global_step=global_step)
-    print(torch.cat(list_dice).mean(dim=0))
 
 
 def calc_dice(device, model, test_generator, transformer, mask_values):
