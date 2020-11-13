@@ -67,7 +67,8 @@ def create_patient_list(img_pattern, patient_list_src, source_folder):
 
 
 def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True,
-                   img_pattern='T1_affine_to_mni.nii.gz', seg_pattern='T1_first_all_fast_firstseg_affine_to_mni.nii.gz',
+                   img_pattern='T2_FLAIR_unbiased_brain_affine_to_mni.nii.gz',
+                   seg_pattern='T1_first_all_fast_firstseg_affine_to_mni.nii.gz',
                    batch_size=1, return_segs=False, np_var='vol',
                    target_shape=None, resize_factor=1, add_feat_axis=False):
     # convert glob path to filenames
