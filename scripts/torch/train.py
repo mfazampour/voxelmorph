@@ -311,10 +311,13 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
 
 
 def evaluate_with_segmentation(model, test_generator, device, writer: SummaryWriter,
-                                transformer, num_of_vol=10, global_step=0):
+                                transformer, num_of_vol=10, global_step=0, calc_statistics=True):
     list_dice = []
     list_hd = []
     list_asd = []
+    list_dice_std = []
+    list_hd_std = []
+    list_asd_std = []
     # mask_values = [0, 10, 11, 12, 13, 16, 17, 18, 26, 49, 50, 51, 52, ]
     structures_dict = {0: 'backround',
         10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
@@ -325,11 +328,15 @@ def evaluate_with_segmentation(model, test_generator, device, writer: SummaryWri
     mask_values = list(structures_dict.keys())
     for step in range(num_of_vol):
         print(step)
-        # generate inputs (and true outputs) and convert them to tensors
-        dice_score, hd_score, asd_score = calc_dice(device, model, test_generator, transformer, mask_values)
+        # generate scores for logging on tensorboard
+        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std = calc_scores(device, model, test_generator, transformer, mask_values,
+                                                      calc_statistics=calc_statistics)
         list_dice.append(dice_score.cpu())
         list_hd.append(hd_score.cpu())
         list_asd.append(asd_score.cpu())
+        list_dice_std.append(dice_std.cpu())
+        list_hd_std.append(hd_std.cpu())
+        list_asd_std.append(asd_std.cpu())
         torch.cuda.empty_cache()
 
     mean_dice = torch.cat(list_dice).mean(dim=0)
@@ -344,33 +351,71 @@ def evaluate_with_segmentation(model, test_generator, device, writer: SummaryWri
     for i, (val) in enumerate(mean_asd):
         writer.add_scalar(f'ASD/{structures_dict[int(mask_values[i])]}', scalar_value=val, global_step=global_step)
 
+    if calc_statistics:
+        log_statistics(torch.cat(list_hd_std), structures_dict.values(), writer=writer,
+                       global_step=global_step, title='Housedorf Distance std')
+        log_statistics(torch.cat(list_dice_std), structures_dict.values(), writer=writer,
+                       global_step=global_step, title='Dice Score std')
+        log_statistics(torch.cat(list_hd_std), structures_dict.values(), writer=writer,
+                       global_step=global_step, title='Average Surface Distance std')
 
-def calc_dice(device, model, test_generator, transformer, mask_values):
+
+def calc_scores(device, model, test_generator, transformer, mask_values, calc_statistics=False):
+    reps = 1
+    if calc_statistics:
+        reps = 10
+    dice_scores = []
+    hd_scores = []
+    asd_scores = []
+
     with torch.no_grad():
-        inputs, y_true, y_pred = apply_model(model=model, generator=test_generator, device=device,
-                                             is_test=True, has_seg=True)
-        seg_fixed = y_true[-1]
-        seg_moving = inputs[-1]
-        dvf = y_pred[-1].detach()
-        morphed = transformer(seg_moving, dvf)
-        morphed = morphed.round()
-        shape = list(seg_fixed.shape)
-        shape[1] = len(mask_values)
-        one_hot_fixed = torch.zeros(shape, device=device)
-        one_hot_morphed = torch.zeros(shape, device=device)
-        for i, (val) in enumerate(mask_values):
-            one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
-            one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
-            seg_fixed[:, 0, seg_fixed[0, 0, ...] == val] = i
-            morphed[:, 0, morphed[0, 0, ...] == val] = i
-        dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False)
-        hd_score = torch.zeros_like(dice_score)
-        asd_score = torch.zeros_like(dice_score)
-        for i in range(len(mask_values)):
-            hd_score[0, i] = compute_hausdorff_distance(morphed, seg_fixed, i)
-            asd_score[0, i] = compute_average_surface_distance(morphed, seg_fixed, i)
+        for n in range(reps):
+            inputs, y_true, y_pred = apply_model(model=model, generator=test_generator, device=device,
+                                                 is_test=True, has_seg=True)
+            seg_fixed = y_true[-1]
+            seg_moving = inputs[-1]
+            dvf = y_pred[-1].detach()
+            morphed = transformer(seg_moving, dvf)
+            morphed = morphed.round()
+            shape = list(seg_fixed.shape)
+            shape[1] = len(mask_values)
+            one_hot_fixed = torch.zeros(shape, device=device)
+            one_hot_morphed = torch.zeros(shape, device=device)
+            for i, (val) in enumerate(mask_values):
+                one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
+                one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
+                seg_fixed[:, 0, seg_fixed[0, 0, ...] == val] = i
+                morphed[:, 0, morphed[0, 0, ...] == val] = i
 
-        return dice_score, hd_score, asd_score
+            dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False)
+            hd_score = torch.zeros_like(dice_score)
+            asd_score = torch.zeros_like(dice_score)
+            for i in range(len(mask_values)):
+                hd_score[0, i] = compute_hausdorff_distance(morphed, seg_fixed, i)
+                asd_score[0, i] = compute_average_surface_distance(morphed, seg_fixed, i)
+
+            dice_scores.append(dice_score)
+            hd_scores.append(hd_score)
+            asd_scores.append(asd_score)
+        # calculate mean and return if no calc_statistics
+        dice_score = torch.cat(dice_scores).mean(dim=0, keepdim=True)
+        hd_score = torch.cat(hd_scores).mean(dim=0, keepdim=True)
+        asd_score = torch.cat(asd_scores).mean(dim=0, keepdim=True)
+        if calc_statistics:
+            dice_std = torch.cat(dice_scores).std(dim=0, keepdim=True)
+            hd_std = torch.cat(hd_scores).std(dim=0, keepdim=True)
+            asd_std = torch.cat(asd_scores).std(dim=0, keepdim=True)
+        else:
+            dice_std, hd_std, asd_std = (torch.tensor([0.0]), torch.tensor([0.0]), torch.tensor([0.0]))
+        return dice_score, hd_score, asd_score, dice_std, hd_std, asd_std
+
+
+def log_statistics(scores_std: torch.Tensor, labels, writer: SummaryWriter, title: str, global_step=0):
+    data = scores_std.numpy()
+    fig, ax = plt.subplots()
+    ax.set_title(title)
+    ax.boxplot(data, vert=False, showfliers=False)
+    writer.add_figure(f'statistics', figure=fig, global_step=global_step)
 
 
 
