@@ -25,6 +25,8 @@ from torch.utils.tensorboard import SummaryWriter
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
 from monai.metrics import compute_meandice
+from monai.metrics import compute_hausdorff_distance
+from monai.metrics import compute_average_surface_distance
 
 # import voxelmorph with pytorch backend
 os.environ['VXM_BACKEND'] = 'pytorch'
@@ -215,7 +217,7 @@ def create_optimizers(args, bidir, model):
 
 def train(args, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names, test_generator):
     ssim = vxm.losses.SSIM()
-    transformer = vxm.layers.SpatialTransformer(size=args.inshape).to(device)
+    transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
 
     for epoch in range(args.initial_epoch, args.epochs):
         # save model checkpoint
@@ -311,6 +313,8 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
 def evaluate_with_segmentation(model, test_generator, device, writer: SummaryWriter,
                                 transformer, num_of_vol=10, global_step=0):
     list_dice = []
+    list_hd = []
+    list_asd = []
     # mask_values = [0, 10, 11, 12, 13, 16, 17, 18, 26, 49, 50, 51, 52, ]
     structures_dict = {0: 'backround',
         10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
@@ -322,13 +326,23 @@ def evaluate_with_segmentation(model, test_generator, device, writer: SummaryWri
     for step in range(num_of_vol):
         print(step)
         # generate inputs (and true outputs) and convert them to tensors
-        dice_score = calc_dice(device, model, test_generator, transformer, mask_values)
+        dice_score, hd_score, asd_score = calc_dice(device, model, test_generator, transformer, mask_values)
         list_dice.append(dice_score.cpu())
+        list_hd.append(hd_score.cpu())
+        list_asd.append(asd_score.cpu())
         torch.cuda.empty_cache()
 
     mean_dice = torch.cat(list_dice).mean(dim=0)
     for i, (val) in enumerate(mean_dice):
         writer.add_scalar(f'dice/{structures_dict[int(mask_values[i])]}', scalar_value=val, global_step=global_step)
+
+    mean_hd = torch.cat(list_hd).mean(dim=0)
+    for i, (val) in enumerate(mean_hd):
+        writer.add_scalar(f'HD/{structures_dict[int(mask_values[i])]}', scalar_value=val, global_step=global_step)
+
+    mean_asd = torch.cat(list_asd).mean(dim=0)
+    for i, (val) in enumerate(mean_asd):
+        writer.add_scalar(f'ASD/{structures_dict[int(mask_values[i])]}', scalar_value=val, global_step=global_step)
 
 
 def calc_dice(device, model, test_generator, transformer, mask_values):
@@ -339,6 +353,7 @@ def calc_dice(device, model, test_generator, transformer, mask_values):
         seg_moving = inputs[-1]
         dvf = y_pred[-1].detach()
         morphed = transformer(seg_moving, dvf)
+        morphed = morphed.round()
         shape = list(seg_fixed.shape)
         shape[1] = len(mask_values)
         one_hot_fixed = torch.zeros(shape, device=device)
@@ -346,8 +361,17 @@ def calc_dice(device, model, test_generator, transformer, mask_values):
         for i, (val) in enumerate(mask_values):
             one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
             one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
+            seg_fixed[:, 0, seg_fixed[0, 0, ...] == val] = i
+            morphed[:, 0, morphed[0, 0, ...] == val] = i
         dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False)
-        return dice_score
+        hd_score = torch.zeros_like(dice_score)
+        asd_score = torch.zeros_like(dice_score)
+        for i in range(len(mask_values)):
+            hd_score[0, i] = compute_hausdorff_distance(morphed, seg_fixed, i)
+            asd_score[0, i] = compute_average_surface_distance(morphed, seg_fixed, i)
+
+        return dice_score, hd_score, asd_score
+
 
 
 if __name__ == "__main__":
