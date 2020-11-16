@@ -94,26 +94,33 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument('--int-downsize', type=int, default=2,
                         help='flow downsample factor for integration (default: 2)')
     parser.add_argument('--bidir', action='store_true', help='enable bidirectional cost function')
+    parser.add_argument('--inshape', type=int, nargs='+',
+                        help='after cropping shape of input. '
+                             'default is equal to image size. specify if the input can\'t path through UNet')
     # loss hyperparameters
     parser.add_argument('--image-loss', default='mse',
                         help='image reconstruction loss - can be mse or ncc (default: mse)')
     parser.add_argument('--lambda', type=float, dest='weight', default=0.01,
                         help='weight of deformation loss (default: 0.01)')
-    parser.add_argument('--inshape', type=int, nargs='+',
-                        help='after cropping shape of input. '
-                             'default is equal to image size. specify if the input can\'t path through UNet')
-    parser.add_argument('--log-dir', type=str, default=None, help='folder for tensorboard logs')
-    parser.add_argument('--display_freq', type=int, default=20, help='frequency of plotting results in tensorboard')
-    parser.add_argument('--loader_name', type=str, default='default', help='volume generator function to use')
-    parser.add_argument('--patient_list_src', type=str, default='/tmp/',
-                        help='directory to store patient list for training and testing')
-    parser.add_argument('--load_segmentation', action='store_true', default=False,
-                        help='use segmentation data for training the network (torch functionality seems to be missing)')
     parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
-    parser.add_argument('--flow-logsigma-bias', type=float, default=-10,
-                        help='negative value for initialization of the logsigma layer bias value')
     parser.add_argument('--kl-lambda', type=float, default=10,
                         help='prior lambda regularization for KL loss (default: 10)')
+    parser.add_argument('--flow-logsigma-bias', type=float, default=-10,
+                        help='negative value for initialization of the logsigma layer bias value')
+    # loading and saving parameters
+    parser.add_argument('--log-dir', type=str, default=None, help='folder for tensorboard logs')
+    parser.add_argument('--loader-name', type=str, default='default', help='volume generator function to use')
+    parser.add_argument('--patient-list-src', type=str, default='/tmp/',
+                        help='directory to store patient list for training and testing')
+    parser.add_argument('--load-segmentation', action='store_true', default=False,
+                        help='use segmentation data for training the network (torch functionality seems to be missing)')
+    parser.add_argument('--display-freq', type=int, default=20, help='frequency of plotting results in tensorboard')
+    parser.add_argument('--statistics-freq', type=int, default=10,
+                        help='frequency/period of plotting the statistics per number of displaying results')
+    parser.add_argument('--num-statistics-runs', type=int, default=5,
+                        help='number of runs to get each statistic')
+    parser.add_argument('--num-test-imgs', type=int, default=10,
+                        help='number of test images to compare the results with previous one')
     return parser
 
 
@@ -215,9 +222,10 @@ def create_optimizers(args, bidir, model):
     return losses, optimizer, weights, loss_names
 
 
-def train(args, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names, test_generator):
+def train(args: argparse.Namespace, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names, test_generator):
     ssim = vxm.losses.SSIM()
     transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
+    display_count = 0
 
     for epoch in range(args.initial_epoch, args.epochs):
         # save model checkpoint
@@ -243,11 +251,17 @@ def train(args, device, generator, losses, model, model_dir, optimizer, weights,
             # tensorboard logging & evaluation
             global_step = (epoch) * args.steps_per_epoch + step + 1
             if global_step % args.display_freq == 1:
+                calc_statistics = False
+                if display_count % args.statistics_freq == 0:
+                    calc_statistics = True
+
+                display_count += 1
                 model.eval()
                 tensorboard_log(model, test_generator, loss_names, device, loss_list, writer, ssim=ssim,
                                 global_step=global_step)
-                evaluate_with_segmentation(model, test_generator, device=device, writer=writer,
-                                           global_step=global_step, transformer=transformer)
+                evaluate_with_segmentation(model, test_generator, device=device, args=args, writer=writer,
+                                           global_step=global_step, transformer=transformer,
+                                           calc_statistics=calc_statistics)
                 model.train()
     # final model save
     model.save(os.path.join(model_dir, '%04d.pt' % args.epochs))
@@ -310,8 +324,8 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
         writer.add_scalar(f'diffs/{key}', diff_dict[key], global_step=global_step)
 
 
-def evaluate_with_segmentation(model, test_generator, device, writer: SummaryWriter,
-                                transformer, num_of_vol=10, global_step=0, calc_statistics=True):
+def evaluate_with_segmentation(model, test_generator, device, args: argparse.Namespace, writer: SummaryWriter,
+                                transformer, global_step=0, calc_statistics=False):
     list_dice = []
     list_hd = []
     list_asd = []
@@ -326,11 +340,12 @@ def evaluate_with_segmentation(model, test_generator, device, writer: SummaryWri
         50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
         53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
     mask_values = list(structures_dict.keys())
-    for step in range(num_of_vol):
+    for step in range(args.num_test_imgs):
         print(step)
         # generate scores for logging on tensorboard
-        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std = calc_scores(device, model, test_generator, transformer, mask_values,
-                                                      calc_statistics=calc_statistics)
+        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std = calc_scores(device, model, test_generator,
+                                                                                 transformer, mask_values, args=args,
+                                                                                 calc_statistics=calc_statistics)
         list_dice.append(dice_score.cpu())
         list_hd.append(hd_score.cpu())
         list_asd.append(asd_score.cpu())
@@ -360,39 +375,18 @@ def evaluate_with_segmentation(model, test_generator, device, writer: SummaryWri
                        global_step=global_step, title='Average Surface Distance std')
 
 
-def calc_scores(device, model, test_generator, transformer, mask_values, calc_statistics=False):
+def calc_scores(device, model, test_generator, transformer, mask_values,
+                args: argparse.Namespace, calc_statistics=False):
     reps = 1
     if calc_statistics:
-        reps = 10
+        reps = args.num_statistics_runs
     dice_scores = []
     hd_scores = []
     asd_scores = []
 
     with torch.no_grad():
         for n in range(reps):
-            inputs, y_true, y_pred = apply_model(model=model, generator=test_generator, device=device,
-                                                 is_test=True, has_seg=True)
-            seg_fixed = y_true[-1]
-            seg_moving = inputs[-1]
-            dvf = y_pred[-1].detach()
-            morphed = transformer(seg_moving, dvf)
-            morphed = morphed.round()
-            shape = list(seg_fixed.shape)
-            shape[1] = len(mask_values)
-            one_hot_fixed = torch.zeros(shape, device=device)
-            one_hot_morphed = torch.zeros(shape, device=device)
-            for i, (val) in enumerate(mask_values):
-                one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
-                one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
-                seg_fixed[:, 0, seg_fixed[0, 0, ...] == val] = i
-                morphed[:, 0, morphed[0, 0, ...] == val] = i
-
-            dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False)
-            hd_score = torch.zeros_like(dice_score)
-            asd_score = torch.zeros_like(dice_score)
-            for i in range(len(mask_values)):
-                hd_score[0, i] = compute_hausdorff_distance(morphed, seg_fixed, i)
-                asd_score[0, i] = compute_average_surface_distance(morphed, seg_fixed, i)
+            asd_score, dice_score, hd_score = get_scores(device, mask_values, model, test_generator, transformer)
 
             dice_scores.append(dice_score)
             hd_scores.append(hd_score)
@@ -410,12 +404,41 @@ def calc_scores(device, model, test_generator, transformer, mask_values, calc_st
         return dice_score, hd_score, asd_score, dice_std, hd_std, asd_std
 
 
+def get_scores(device, mask_values, model, test_generator, transformer):
+    inputs, y_true, y_pred = apply_model(model=model, generator=test_generator, device=device,
+                                         is_test=True, has_seg=True)
+    seg_fixed = y_true[-1]
+    seg_moving = inputs[-1]
+    dvf = y_pred[-1].detach()
+    morphed = transformer(seg_moving, dvf)
+    morphed = morphed.round()
+    shape = list(seg_fixed.shape)
+    shape[1] = len(mask_values)
+    one_hot_fixed = torch.zeros(shape, device=device)
+    one_hot_morphed = torch.zeros(shape, device=device)
+    for i, (val) in enumerate(mask_values):
+        one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
+        one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
+        seg_fixed[:, 0, seg_fixed[0, 0, ...] == val] = i
+        morphed[:, 0, morphed[0, 0, ...] == val] = i
+    dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False)
+    hd_score = torch.zeros_like(dice_score)
+    asd_score = torch.zeros_like(dice_score)
+    for i in range(len(mask_values)):
+        hd_score[0, i] = compute_hausdorff_distance(morphed, seg_fixed, i)
+        asd_score[0, i] = compute_average_surface_distance(morphed, seg_fixed, i)
+    return asd_score, dice_score, hd_score
+
+
 def log_statistics(scores_std: torch.Tensor, labels, writer: SummaryWriter, title: str, global_step=0):
     data = scores_std.numpy()
     fig, ax = plt.subplots()
     ax.set_title(title)
     ax.boxplot(data, vert=False, showfliers=False)
-    writer.add_figure(f'statistics', figure=fig, global_step=global_step)
+    ax.set_yticklabels(labels)
+    fig.set_size_inches(12, 8)
+    writer.add_figure(f'statistics/{title}', figure=fig, global_step=global_step)
+    print(f'created statistic figure for {title}')
 
 
 
