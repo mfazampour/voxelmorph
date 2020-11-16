@@ -44,6 +44,8 @@ def main():
         args.log_dir = args.model_dir
     writer = SummaryWriter(log_dir=f'{args.log_dir}/{datetime.now().strftime("%d.%m.%Y_%H.%M")}')
 
+    log_input_params(args, writer)
+
     generator = create_data_generator(args)
 
     test_generator = create_data_generator(args, is_train=False)
@@ -222,7 +224,8 @@ def create_optimizers(args, bidir, model):
     return losses, optimizer, weights, loss_names
 
 
-def train(args: argparse.Namespace, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names, test_generator):
+def train(args: argparse.Namespace, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names,
+          test_generator):
     ssim = vxm.losses.SSIM()
     transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
     display_count = 0
@@ -308,7 +311,6 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
     for name, value in zip(loss_names, list(map(float, loss_list))):
         writer.add_scalar(f'loss/{name}', value, global_step=global_step)
 
-
     fix_to_mov = torch.mean((y_true[0][y_true[0] != 0] - inputs[0][y_true[0] != 0]) ** 2).cpu()
     fix_to_reg = torch.mean((y_true[0][y_true[0] != 0] - y_pred[y_true[0] != 0]) ** 2).cpu()
     ssim_mov = ssim.loss(y_true[0], inputs[0]).item()
@@ -325,7 +327,7 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
 
 
 def evaluate_with_segmentation(model, test_generator, device, args: argparse.Namespace, writer: SummaryWriter,
-                                transformer, global_step=0, calc_statistics=False):
+                               transformer, global_step=0, calc_statistics=False):
     list_dice = []
     list_hd = []
     list_asd = []
@@ -334,11 +336,11 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
     list_asd_std = []
     # mask_values = [0, 10, 11, 12, 13, 16, 17, 18, 26, 49, 50, 51, 52, ]
     structures_dict = {0: 'backround',
-        10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
-        13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
-        18: 'left_amygdala', 26: 'left_accumbens', 49: 'right_thalamus',
-        50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
-        53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
+                       10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
+                       13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
+                       18: 'left_amygdala', 26: 'left_accumbens', 49: 'right_thalamus',
+                       50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
+                       53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
     mask_values = list(structures_dict.keys())
     for step in range(args.num_test_imgs):
         print(step)
@@ -440,6 +442,15 @@ def log_statistics(scores_std: torch.Tensor, labels, writer: SummaryWriter, titl
     writer.add_figure(f'statistics/{title}', figure=fig, global_step=global_step)
     print(f'created statistic figure for {title}')
 
+
+def log_input_params(args: argparse.Namespace, writer: SummaryWriter):
+    cell_data = [[key, f'{value}'] for key, value in zip(vars(args).keys(), vars(args).values())]
+    fig, ax = plt.subplots(1, 1)
+    ax.table(cellText=cell_data,
+             loc='center')
+    fig.set_size_inches(8, 10)
+    ax.set_axis_off()
+    writer.add_figure('Params', fig)
 
 
 if __name__ == "__main__":
