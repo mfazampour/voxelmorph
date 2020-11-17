@@ -451,6 +451,10 @@ def log_input_params(args: argparse.Namespace, writer: SummaryWriter):
     fig.set_size_inches(8, 10)
     ax.set_axis_off()
     writer.add_figure('Params', fig)
+    param_text = "\n\n".join(["{key:<20}:{value:>40}".format(key=key, value=f'{value}')
+                              for key, value in zip(vars(args).keys(), vars(args).values())])
+    writer.add_text('params', param_text)
+    print(param_text)
 
 
 if __name__ == "__main__":
