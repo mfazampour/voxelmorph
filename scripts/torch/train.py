@@ -256,7 +256,7 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
             global_step = (epoch) * args.steps_per_epoch + step + 1
             if global_step % args.display_freq == 1:
                 calc_statistics = False
-                if display_count % args.statistics_freq & args.use_probs == 0:
+                if (display_count % args.statistics_freq == 0) and args.use_probs:
                     calc_statistics = True
 
                 display_count += 1
