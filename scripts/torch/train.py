@@ -24,14 +24,12 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
-from monai.metrics import compute_meandice
-from monai.metrics import compute_hausdorff_distance
-from monai.metrics import compute_average_surface_distance
 
 # import voxelmorph with pytorch backend
 os.environ['VXM_BACKEND'] = 'pytorch'
 import voxelmorph as vxm
-
+from scripts.torch.utils import apply_model
+from scripts.torch.utils import calc_scores
 
 def main():
     parser = parse_args()
@@ -270,32 +268,6 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
     model.save(os.path.join(model_dir, '%04d.pt' % args.epochs))
 
 
-def apply_model(model, generator, device, losses=None, weights=None, is_test=False, has_seg=False):
-    # generate inputs (and true outputs) and convert them to tensors
-    inputs, y_true = next(generator)
-    if not isinstance(inputs[0], torch.Tensor):
-        inputs = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in inputs]
-        y_true = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in y_true]
-    inputs = [t.to(device) for t in inputs]
-    y_true = [t.to(device) for t in y_true]
-    # run inputs through the model to produce a warped image and flow field
-    if has_seg:
-        y_pred = model(*inputs[:-1], registration=is_test)
-    else:
-        y_pred = model(*inputs, registration=is_test)
-
-    if losses is None:
-        return inputs, y_true, y_pred
-    # calculate total loss
-    loss = torch.tensor([0], dtype=torch.float).to(device)
-    loss_list = []
-    for n, loss_function in enumerate(losses):
-        curr_loss = loss_function(y_true[n], y_pred[n]) * weights[n]
-        loss_list.append('%.6f' % curr_loss.item())
-        loss += curr_loss
-    return loss, loss_list, inputs, y_true, y_pred
-
-
 def tensorboard_log(model, test_generator, loss_names, device, loss_list,
                     writer: SummaryWriter, ssim: vxm.losses.SSIM, global_step=0):
     with torch.no_grad():
@@ -345,8 +317,9 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
     for step in range(args.num_test_imgs):
         print(step)
         # generate scores for logging on tensorboard
-        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std = calc_scores(device, model, test_generator,
-                                                                                 transformer, mask_values, args=args,
+        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std = calc_scores(device, mask_values, model, transformer,
+                                                                                 test_generator=test_generator,
+                                                                                 num_statistics_runs=args.num_statistics_runs,
                                                                                  calc_statistics=calc_statistics)
         list_dice.append(dice_score.cpu())
         list_hd.append(hd_score.cpu())
@@ -377,59 +350,34 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
                        global_step=global_step, title='Average Surface Distance std')
 
 
-def calc_scores(device, model, test_generator, transformer, mask_values,
-                args: argparse.Namespace, calc_statistics=False):
-    reps = 1
-    if calc_statistics:
-        reps = args.num_statistics_runs
-    dice_scores = []
-    hd_scores = []
-    asd_scores = []
-
-    with torch.no_grad():
-        for n in range(reps):
-            asd_score, dice_score, hd_score = get_scores(device, mask_values, model, test_generator, transformer)
-
-            dice_scores.append(dice_score)
-            hd_scores.append(hd_score)
-            asd_scores.append(asd_score)
-        # calculate mean and return if no calc_statistics
-        dice_score = torch.cat(dice_scores).mean(dim=0, keepdim=True)
-        hd_score = torch.cat(hd_scores).mean(dim=0, keepdim=True)
-        asd_score = torch.cat(asd_scores).mean(dim=0, keepdim=True)
-        if calc_statistics:
-            dice_std = torch.cat(dice_scores).std(dim=0, keepdim=True)
-            hd_std = torch.cat(hd_scores).std(dim=0, keepdim=True)
-            asd_std = torch.cat(asd_scores).std(dim=0, keepdim=True)
-        else:
-            dice_std, hd_std, asd_std = (torch.tensor([0.0]), torch.tensor([0.0]), torch.tensor([0.0]))
-        return dice_score, hd_score, asd_score, dice_std, hd_std, asd_std
-
-
-def get_scores(device, mask_values, model, test_generator, transformer):
-    inputs, y_true, y_pred = apply_model(model=model, generator=test_generator, device=device,
-                                         is_test=True, has_seg=True)
-    seg_fixed = y_true[-1]
-    seg_moving = inputs[-1]
-    dvf = y_pred[-1].detach()
-    morphed = transformer(seg_moving, dvf)
-    morphed = morphed.round()
-    shape = list(seg_fixed.shape)
-    shape[1] = len(mask_values)
-    one_hot_fixed = torch.zeros(shape, device=device)
-    one_hot_morphed = torch.zeros(shape, device=device)
-    for i, (val) in enumerate(mask_values):
-        one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
-        one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
-        seg_fixed[:, 0, seg_fixed[0, 0, ...] == val] = i
-        morphed[:, 0, morphed[0, 0, ...] == val] = i
-    dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False)
-    hd_score = torch.zeros_like(dice_score)
-    asd_score = torch.zeros_like(dice_score)
-    for i in range(len(mask_values)):
-        hd_score[0, i] = compute_hausdorff_distance(morphed, seg_fixed, i)
-        asd_score[0, i] = compute_average_surface_distance(morphed, seg_fixed, i)
-    return asd_score, dice_score, hd_score
+# def calc_scores(device, model, test_generator, transformer, mask_values,
+#                 args: argparse.Namespace, calc_statistics=False):
+#     reps = 1
+#     if calc_statistics:
+#         reps = args.num_statistics_runs
+#     dice_scores = []
+#     hd_scores = []
+#     asd_scores = []
+#
+#     with torch.no_grad():
+#         for n in range(reps):
+#             asd_score, dice_score, hd_score = get_scores(device, mask_values, model, transformer,
+#                                                          test_generator=test_generator)
+#
+#             dice_scores.append(dice_score)
+#             hd_scores.append(hd_score)
+#             asd_scores.append(asd_score)
+#         # calculate mean and return if no calc_statistics
+#         dice_score = torch.cat(dice_scores).mean(dim=0, keepdim=True)
+#         hd_score = torch.cat(hd_scores).mean(dim=0, keepdim=True)
+#         asd_score = torch.cat(asd_scores).mean(dim=0, keepdim=True)
+#         if calc_statistics:
+#             dice_std = torch.cat(dice_scores).std(dim=0, keepdim=True)
+#             hd_std = torch.cat(hd_scores).std(dim=0, keepdim=True)
+#             asd_std = torch.cat(asd_scores).std(dim=0, keepdim=True)
+#         else:
+#             dice_std, hd_std, asd_std = (torch.tensor([0.0]), torch.tensor([0.0]), torch.tensor([0.0]))
+#         return dice_score, hd_score, asd_score, dice_std, hd_std, asd_std
 
 
 def log_statistics(scores_std: torch.Tensor, labels, writer: SummaryWriter, title: str, global_step=0):
