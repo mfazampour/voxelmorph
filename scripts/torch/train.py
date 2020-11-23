@@ -35,6 +35,10 @@ def main():
     parser = parse_args()
     args = parser.parse_args()
 
+    # prepare model folder
+    model_dir = args.model_dir
+    os.makedirs(model_dir, exist_ok=True)
+
     bidir = args.bidir
 
     # tensorboard
@@ -50,9 +54,7 @@ def main():
 
     # extract shape from sampled input
     inshape = args.inshape
-    # prepare model folder
-    model_dir = args.model_dir
-    os.makedirs(model_dir, exist_ok=True)
+
     # device handling
     gpus = args.gpu.split(',')
     nb_gpus = len(gpus)
@@ -253,7 +255,7 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
             global_step = (epoch) * args.steps_per_epoch + step + 1
             if global_step % args.display_freq == 1:
                 calc_statistics = False
-                if display_count % args.statistics_freq == 0:
+                if display_count % args.statistics_freq & args.use_probs == 0:
                     calc_statistics = True
 
                 display_count += 1
@@ -396,7 +398,7 @@ def log_input_params(args: argparse.Namespace, writer: SummaryWriter):
     fig, ax = plt.subplots(1, 1)
     ax.table(cellText=cell_data,
              loc='center')
-    fig.set_size_inches(8, 10)
+    fig.set_size_inches(6, 8)
     ax.set_axis_off()
     writer.add_figure('Params', fig)
     param_text = "\n\n".join(["{key:<20}:{value:>40}".format(key=key, value=f'{value}')
