@@ -237,7 +237,8 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
         for step in range(args.steps_per_epoch):
             step_start_time = time.time()
 
-            loss, loss_list, _, _, _ = apply_model(model, generator, device, losses, weights)
+            loss, loss_list, _, _, _ = apply_model(model=model, generator=generator, device=device,
+                                                   losses=losses, weights=weights)
             loss_info = 'loss: %.6f  (%s)' % (loss.item(), ', '.join(loss_list))
 
             # backpropagate and optimize

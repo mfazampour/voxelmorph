@@ -3,7 +3,7 @@ from monai.metrics import compute_meandice
 from monai.metrics import compute_hausdorff_distance
 from monai.metrics import compute_average_surface_distance
 
-def apply_model(model, generator=None, inputs=None, y_true=None, device='cpu', losses=None, weights=None, is_test=False, has_seg=False):
+def apply_model(model: torch.nn.Module, generator=None, inputs=None, y_true=None, device='cpu', losses=None, weights=None, is_test=False, has_seg=False):
     # generate inputs (and true outputs) and convert them to tensors
     assert generator is not None or (inputs is not None and y_true is not None), 'Either generator or input/y_true needed'
     if generator is not None:
