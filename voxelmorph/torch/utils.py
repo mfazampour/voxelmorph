@@ -23,6 +23,21 @@ def fill_subplots(img: torch.Tensor, axs, img_name='', fontsize=6, cmap='gray'):
 def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.Tensor, deformation: torch.Tensor):
     nrow = 6
     ncol = 3
+    axs, fig = init_figure(ncol, nrow)
+
+    # fig, axs = plt.subplots(5, 3)
+    set_axs_attribute(axs)
+    fill_subplots(fixed, axs=axs[0, :], img_name='Fixed')
+    fill_subplots(moving, axs=axs[1, :], img_name='Moving')
+    fill_subplots(fixed - moving, axs=axs[2, :], img_name='Fix-Mov')
+    fill_subplots(registered, axs=axs[3, :], img_name='Registered')
+    fill_subplots(fixed - registered, axs=axs[4, :], img_name='Fix-Reg')
+    deform_ = (deformation + 5) / 10
+    fill_subplots(deform_, axs=axs[5, :], img_name='Def.', cmap=None)
+    return fig
+
+
+def init_figure(ncol, nrow):
     fig = plt.figure(figsize=(2 * ncol + 1, 2 * nrow + 1))  # , constrained_layout=True)
     spec = gridspec.GridSpec(nrow, ncol, figure=fig,
                              wspace=0.2, hspace=0.2,
@@ -38,14 +53,4 @@ def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.T
             tmp.append(ax)
         axs.append(tmp)
     axs = np.asarray(axs)
-
-    # fig, axs = plt.subplots(5, 3)
-    set_axs_attribute(axs)
-    fill_subplots(fixed, axs=axs[0, :], img_name='Fixed')
-    fill_subplots(moving, axs=axs[1, :], img_name='Moving')
-    fill_subplots(fixed - moving, axs=axs[2, :], img_name='Fix-Mov')
-    fill_subplots(registered, axs=axs[3, :], img_name='Registered')
-    fill_subplots(fixed - registered, axs=axs[4, :], img_name='Fix-Reg')
-    deform_ = (deformation + 5) / 10
-    fill_subplots(deform_, axs=axs[5, :], img_name='Def.', cmap=None)
-    return fig
+    return axs, fig
