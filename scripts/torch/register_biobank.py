@@ -91,6 +91,13 @@ model = vxm.networks.VxmDense.load(args.model, device)
 model.to(device)
 model.eval()
 
+structures_dict = {0: 'backround',
+                10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
+                13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
+                18: 'left_amygdala', 26: 'left_accumbens', 49: 'right_thalamus',
+                50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
+                53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
+
 # predict
 with torch.no_grad():
     moved, warp = model(moving.image.tensor.unsqueeze(dim=0).cuda(),
@@ -103,14 +110,8 @@ with torch.no_grad():
         vxm.py.utils.save_volfile(moved, args.moved)
 
     if args.moving_seg:
-        transformer = vxm.layers.SpatialTransformer(size=args.inshape).to(device)
+        transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
         morphed = transformer(moving.label.tensor.unsqueeze(dim=0).cuda(), warp)
-        structures_dict = {0: 'backround',
-                10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
-                13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
-                18: 'left_amygdala', 26: 'left_accumbens', 49: 'right_thalamus',
-                50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
-                53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
         mask_values = list(structures_dict.keys())
         shape = list(fixed.label.tensor.unsqueeze(dim=0).shape)
         shape[1] = len(mask_values)
@@ -131,12 +132,6 @@ with torch.no_grad():
 
 if args.use_probs and args.moving_seg:
     transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
-    structures_dict = {0: 'backround',
-                       10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
-                       13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
-                       18: 'left_amygdala', 26: 'left_accumbens', 49: 'right_thalamus',
-                       50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
-                       53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
     mask_values = list(structures_dict.keys())
     input_ = [moving.image.tensor.unsqueeze(dim=0).cuda(),
                 fixed.image.tensor.unsqueeze(dim=0).cuda(), moving.label.tensor.unsqueeze(dim=0).cuda()]
