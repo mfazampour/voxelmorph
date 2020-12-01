@@ -75,9 +75,11 @@ class MSE:
     """
     Mean squared error loss.
     """
+    def __init__(self, image_sigma=1.0):
+        self.image_sigma = image_sigma
 
     def loss(self, y_true, y_pred):
-        return torch.mean((y_true - y_pred) ** 2)
+        return 1.0 / (self.image_sigma**2) * torch.mean((y_true - y_pred) ** 2)
 
 
 class Dice:

@@ -103,6 +103,7 @@ def parse_args() -> argparse.ArgumentParser:
     # loss hyperparameters
     parser.add_argument('--image-loss', default='mse',
                         help='image reconstruction loss - can be mse or ncc (default: mse)')
+    parser.add_argument('--image-sigma', default=1.0, type=float, help='sigma for the mse loss')
     parser.add_argument('--lambda', type=float, dest='weight', default=0.01,
                         help='weight of deformation loss (default: 0.01)')
     parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
@@ -197,7 +198,7 @@ def create_optimizers(args, bidir, model):
     if args.image_loss == 'ncc':
         image_loss_func = vxm.losses.NCC().loss
     elif args.image_loss == 'mse':
-        image_loss_func = vxm.losses.MSE().loss
+        image_loss_func = vxm.losses.MSE(args.image_sigma).loss
     elif args.image_loss == 'ssim':
         image_loss_func = vxm.losses.SSIM().loss
     elif args.image_loss == 'mind':
