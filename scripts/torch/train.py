@@ -353,36 +353,6 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
                        global_step=global_step, title='Average Surface Distance std')
 
 
-# def calc_scores(device, model, test_generator, transformer, mask_values,
-#                 args: argparse.Namespace, calc_statistics=False):
-#     reps = 1
-#     if calc_statistics:
-#         reps = args.num_statistics_runs
-#     dice_scores = []
-#     hd_scores = []
-#     asd_scores = []
-#
-#     with torch.no_grad():
-#         for n in range(reps):
-#             asd_score, dice_score, hd_score = get_scores(device, mask_values, model, transformer,
-#                                                          test_generator=test_generator)
-#
-#             dice_scores.append(dice_score)
-#             hd_scores.append(hd_score)
-#             asd_scores.append(asd_score)
-#         # calculate mean and return if no calc_statistics
-#         dice_score = torch.cat(dice_scores).mean(dim=0, keepdim=True)
-#         hd_score = torch.cat(hd_scores).mean(dim=0, keepdim=True)
-#         asd_score = torch.cat(asd_scores).mean(dim=0, keepdim=True)
-#         if calc_statistics:
-#             dice_std = torch.cat(dice_scores).std(dim=0, keepdim=True)
-#             hd_std = torch.cat(hd_scores).std(dim=0, keepdim=True)
-#             asd_std = torch.cat(asd_scores).std(dim=0, keepdim=True)
-#         else:
-#             dice_std, hd_std, asd_std = (torch.tensor([0.0]), torch.tensor([0.0]), torch.tensor([0.0]))
-#         return dice_score, hd_score, asd_score, dice_std, hd_std, asd_std
-
-
 def log_statistics(scores_std: torch.Tensor, labels, writer: SummaryWriter, title: str, global_step=0):
     data = scores_std.numpy()
     fig, ax = plt.subplots()

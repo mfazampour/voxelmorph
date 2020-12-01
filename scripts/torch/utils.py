@@ -32,8 +32,8 @@ def apply_model(model: torch.nn.Module, generator=None, inputs=None, y_true=None
 
 
 def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.nn.Module,
-               test_generator=None, inputs=None, y_true=None):
-    inputs, y_true, y_pred = apply_model(model, generator=test_generator, inputs=inputs,
+               inputs, y_true):
+    inputs, y_true, y_pred = apply_model(model, inputs=inputs,
                                          y_true=y_true, device=device,
                                          is_test=True, has_seg=True)
     seg_fixed = y_true[-1].clone()
@@ -70,9 +70,11 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
     asd_scores = []
 
     with torch.no_grad():
+        if test_generator is not None:
+            inputs, y_true = next(test_generator)
         for n in range(reps):
             asd_score, dice_score, hd_score = get_scores(device, mask_values, model, transformer,
-                                                         test_generator=test_generator, inputs=inputs, y_true=y_true)
+                                                         inputs=inputs, y_true=y_true)
             dice_scores.append(dice_score)
             hd_scores.append(hd_score)
             asd_scores.append(asd_score)
