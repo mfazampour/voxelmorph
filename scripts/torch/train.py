@@ -39,6 +39,8 @@ def main():
     model_dir = args.model_dir
     os.makedirs(model_dir, exist_ok=True)
 
+    print_options(parser, args)
+
     bidir = args.bidir
 
     # tensorboard
@@ -126,6 +128,31 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument('--num-test-imgs', type=int, default=10,
                         help='number of test images to compare the results with previous one')
     return parser
+
+
+def print_options(parser, opt):
+    """Print and save options
+
+    It will print both current options and default values(if different).
+    It will save options into a text file / [checkpoints_dir] / opt.txt
+    """
+    message = ''
+    message += '----------------- Options ---------------\n'
+    for k, v in sorted(vars(opt).items()):
+        comment = ''
+        default = parser.get_default(k)
+        if v != default:
+            comment = '\t[default: %s]' % str(default)
+        message += '{:>25}: {:<30}{}\n'.format(str(k), str(v), comment)
+    message += '----------------- End -------------------'
+    print(message)
+
+    # save to the disk
+    expr_dir = os.path.join(opt.model_dir)
+    file_name = os.path.join(expr_dir, 'params.txt')
+    with open(file_name, 'wt') as opt_file:
+        opt_file.write(message)
+        opt_file.write('\n')
 
 
 def create_data_generator(args, is_train=True):
@@ -377,7 +404,6 @@ def log_input_params(args: argparse.Namespace, writer: SummaryWriter):
     param_text = "\n\n".join(["{key:<20}:{value:>40}".format(key=key, value=f'{value}')
                               for key, value in zip(vars(args).keys(), vars(args).values())])
     writer.add_text('params', param_text)
-    print(param_text)
 
 
 if __name__ == "__main__":
