@@ -99,6 +99,7 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument('--inshape', type=int, nargs='+',
                         help='after cropping shape of input. '
                              'default is equal to image size. specify if the input can\'t path through UNet')
+    parser.add_argument('--target-spacing', type=float, default=1, help='target spacing of the inputs to the network')
     # loss hyperparameters
     parser.add_argument('--image-loss', default='mse',
                         help='image reconstruction loss - can be mse or ncc (default: mse)')
@@ -152,7 +153,7 @@ def create_data_generator(args, is_train=True):
         generator = vxm.generators.scan_to_scan(train_vol_names, batch_size=args.batch_size,
                                                 bidir=args.bidir, add_feat_axis=add_feat_axis,
                                                 loader_name=args.loader_name, target_shape=args.inshape,
-                                                return_segs=return_segs,
+                                                return_segs=return_segs, target_spacing=args.target_spacing,
                                                 patient_list_src=args.patient_list_src, is_train=is_train)
     return generator
 

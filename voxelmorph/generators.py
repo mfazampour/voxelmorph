@@ -22,12 +22,14 @@ import torch
 from . import py
 
 
-def biobank_transform(target_shape=None, min_value=0, max_value=1):
+def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None):
     if min_value is None:
         transforms = []
     else:
         rescale = RescaleIntensity((min_value, max_value))
         transforms = [rescale]
+    if target_spacing is not None:
+        transforms.append(Resample(target_spacing))
     if target_shape is not None:
         transforms.append(CropOrPad(target_shape=target_shape))
     return Compose(transforms)
@@ -70,13 +72,13 @@ def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True,
                    img_pattern='T2_FLAIR_unbiased_brain_affine_to_mni.nii.gz',
                    seg_pattern='T1_first_all_fast_firstseg_affine_to_mni.nii.gz',
                    batch_size=1, return_segs=False, np_var='vol',
-                   target_shape=None, resize_factor=1, add_feat_axis=False):
+                   target_shape=None, target_spacing=None, resize_factor=1, add_feat_axis=False):
     # convert glob path to filenames
 
     assert os.path.isdir(source_folder), f'{source_folder} is not a folder '
 
     vol_names, seg_names = load_vol_pathes(patient_list_src, source_folder, img_pattern=img_pattern, seg_pattern=seg_pattern, is_train=is_train)
-    transform = biobank_transform(target_shape)
+    transform = biobank_transform(target_shape, target_spacing=target_spacing)
     transform_seg = biobank_transform(target_shape, min_value=None)
 
     while True:
