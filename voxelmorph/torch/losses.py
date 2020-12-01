@@ -321,7 +321,7 @@ class KL:
         Note: could probably do with a difference filter,
         but the edges would be complicated unless tensorflow allowed for edge copying
         """
-        vol_shape = list(y_pred.shape)[1:-1]
+        vol_shape = list(y_pred.shape)[2:]
         ndims = len(vol_shape)
 
         sm = torch.tensor([0.0], device=y_pred.device)
@@ -329,7 +329,7 @@ class KL:
             d = i + 1
             # permute dimensions to put the ith dimension first
             r = [d, *range(d), *range(d + 1, ndims + 2)]
-            y = y_pred.permute(r)
+            y = y_pred.permute([0, *range(2, ndims + 2), 1]).permute(r)  # first change to TF convention then perm
             df = y[1:, ...] - y[:-1, ...]
             sm += (df * df).mean()
 
