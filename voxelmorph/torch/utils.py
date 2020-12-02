@@ -11,6 +11,12 @@ def set_axs_attribute(axs):
 
 
 def fill_subplots(img: torch.Tensor, axs, img_name='', fontsize=6, cmap='gray'):
+    if cmap == 'gray':  # map image to 0...1
+        img = (img + img.min())/(img.max() - img.min())
+    elif cmap is None:  # cliping data to 0...255
+        img[img < 0] = 0
+        img[img > 255] = 255
+
     shape = img.shape[-3:]
     axs[0].imshow(img[0, :, int(shape[0] / 2), :, :].permute(dims=(1, 2, 0)).squeeze().numpy(), cmap=cmap)
     axs[0].set_title(f'{img_name} central slice \n in sagittal view', fontsize=fontsize)
