@@ -292,11 +292,13 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
                 display_count += 1
                 model.eval()
                 if args.use_probs:
-                    log_sigma = y_pred[-1][:, 1:2, ...].detach().cpu()
+                    log_sigma = y_pred[-1][1:2, ...].detach().cpu()
+                    mean = y_pred[-1][0:1, ...].detach().cpu()
                 else:
                     log_sigma = None
+                    mean = None
                 tensorboard_log(model, test_generator, loss_names, device, loss_list,  writer, ssim=ssim,
-                                log_sigma=log_sigma, global_step=global_step)
+                                log_sigma=log_sigma, mean=mean, global_step=global_step)
                 evaluate_with_segmentation(model, test_generator, device=device, args=args, writer=writer,
                                            global_step=global_step, transformer=transformer,
                                            calc_statistics=calc_statistics)
@@ -306,14 +308,14 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
 
 
 def tensorboard_log(model, test_generator, loss_names, device, loss_list,
-                    writer: SummaryWriter, ssim: vxm.losses.SSIM, log_sigma=None, global_step=0):
+                    writer: SummaryWriter, ssim: vxm.losses.SSIM, log_sigma=None, mean=None, global_step=0):
     with torch.no_grad():
         inputs, y_true, y_pred = apply_model(model=model, generator=test_generator, device=device,
                                              is_test=True, has_seg=True)
     ddf = y_pred[-1].detach()
     y_pred = y_pred[0]
     figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred.cpu(),
-                                           ddf.cpu(), log_sigma=log_sigma)
+                                           ddf.cpu(), log_sigma=log_sigma, mean=mean)
     writer.add_figure(tag='volumes',
                       figure=figure,
                       global_step=global_step)

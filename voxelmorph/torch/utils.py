@@ -3,6 +3,7 @@ from typing import List
 import torch
 import numpy as np
 from matplotlib import pyplot as plt
+import matplotlib.ticker as ticker
 from matplotlib import gridspec
 
 
@@ -11,10 +12,22 @@ def set_axs_attribute(axs):
         ax.axes.xaxis.set_visible(False)
         ax.axes.yaxis.set_visible(False)
 
+def fmt(x, pos):
+    """
+    Format color bar labels to show scientific label
+    """
+    a, b = '{:.1e}'.format(x).split('e')
+    b = int(b)
+    # return r'${} \ e^{{{}}}$'.format(a, b)
+    if pos % 3 == 0:
+        return r'${} \ e^{{{}}}$'.format(a, b)
+    else:
+        return r'${}$'.format(a)
+
 
 def fill_subplots(img: torch.Tensor, axs, img_name='', fontsize=6, cmap='gray',
-                  fig: plt.Figure=None, show_colorbar=False):
-    if cmap == 'gray':  # map image to 0...1
+                  fig: plt.Figure=None, show_colorbar=False, normalize=True):
+    if cmap == 'gray' and normalize:  # map image to 0...1
         img = (img + img.min())/(img.max() - img.min())
     elif cmap is None:  # cliping data to 0...255
         img[img < 0] = 0
@@ -28,16 +41,23 @@ def fill_subplots(img: torch.Tensor, axs, img_name='', fontsize=6, cmap='gray',
     img2 = axs[2].imshow(img[0, :, :, :, int(shape[0] / 2)].permute(dims=(1, 2, 0)).squeeze().numpy(), cmap=cmap)
     axs[2].set_title(f'{img_name} central slice \n in axial view', fontsize=fontsize)
     if show_colorbar and fig is not None:
-        fig.colorbar(img1, ax=axs[0], orientation='horizontal')
-        fig.colorbar(img1, ax=axs[1], orientation='horizontal')
-        fig.colorbar(img2, ax=axs[2], orientation='horizontal')
+        set_colorbar(img0, axs[0], fig, fontsize)
+        set_colorbar(img1, axs[1], fig, fontsize)
+        set_colorbar(img2, axs[2], fig, fontsize)
+
+
+def set_colorbar(img, ax, fig, fontsize):
+    cb = fig.colorbar(img, ax=ax, orientation='horizontal', format=ticker.FuncFormatter(fmt), pad=0.2)
+    cb.ax.tick_params(labelsize=fontsize)
+
 
 def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.Tensor,
-                  deformation: torch.Tensor, log_sigma: torch.Tensor = None):
-    if log_sigma is None:
-        nrow = 6
-    else:
-        nrow = 7
+                  deformation: torch.Tensor, log_sigma: torch.Tensor = None, mean: torch.Tensor = None):
+    nrow = 6
+    if log_sigma is not None:
+        nrow += 3
+    if mean is not None:
+        nrow += 3
     ncol = 3
     axs, fig = init_figure(ncol, nrow)
 
@@ -50,8 +70,16 @@ def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.T
     fill_subplots(fixed - registered, axs=axs[4, :], img_name='Fix-Reg')
     deform_ = (deformation + 5) / 10
     fill_subplots(deform_, axs=axs[5, :], img_name='Def.', cmap=None)
+    idx = 5
     if log_sigma is not None:
-        fill_subplots(log_sigma, axs=axs[6, :], img_name='LogSigma', cmap=None, fig=fig, show_colorbar=True)
+        fill_subplots(log_sigma[:, 0:1, ...], axs=axs[idx + 1, ...], img_name='LogSigma X', cmap='RdBu', fig=fig, show_colorbar=True)
+        fill_subplots(log_sigma[:, 1:2, ...], axs=axs[idx + 2, ...], img_name='LogSigma Y', cmap='RdBu', fig=fig, show_colorbar=True)
+        fill_subplots(log_sigma[:, 2:3, ...], axs=axs[idx + 3, ...], img_name='LogSigma Z', cmap='RdBu', fig=fig, show_colorbar=True)
+        idx += 3
+    if mean is not None:
+        fill_subplots(mean[:, 0:1, ...], axs=axs[idx + 1, ...], img_name='mean X', cmap='RdBu', fig=fig, show_colorbar=True)
+        fill_subplots(mean[:, 1:2, ...], axs=axs[idx + 2, ...], img_name='mean Y', cmap='RdBu', fig=fig, show_colorbar=True)
+        fill_subplots(mean[:, 2:3, ...], axs=axs[idx + 3, ...], img_name='mean Z', cmap='RdBu', fig=fig, show_colorbar=True)
     return fig
 
 
