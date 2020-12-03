@@ -314,8 +314,11 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
                                              is_test=True, has_seg=True)
     ddf = y_pred[-1].detach()
     y_pred = y_pred[0]
+    jacob = vxm.py.utils.jacobian_determinant(ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
     figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred.cpu(),
-                                           ddf.cpu(), log_sigma=log_sigma, mean=mean)
+                                           jacob=torch.tensor(jacob).view_as(y_true[0]),
+                                           deformation=ddf.cpu(), log_sigma=log_sigma, mean=mean)
+    print(f'Det. Jacob. of DDF has {len(jacob[jacob < 0])} negative elements, percentage: {len(jacob[jacob < 0])/len(jacob)}')
     writer.add_figure(tag='volumes',
                       figure=figure,
                       global_step=global_step)
