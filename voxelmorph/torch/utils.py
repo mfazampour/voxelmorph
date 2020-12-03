@@ -21,23 +21,20 @@ def fill_subplots(img: torch.Tensor, axs, img_name='', fontsize=6, cmap='gray',
         img[img > 255] = 255
 
     shape = img.shape[-3:]
-    img1 = img[0, :, int(shape[0] / 2), :, :].permute(dims=(1, 2, 0)).squeeze().numpy()
-    axs[0].imshow(img1, cmap=cmap)
+    img0 = axs[0].imshow(img[0, :, int(shape[0] / 2), :, :].permute(dims=(1, 2, 0)).squeeze().numpy(), cmap=cmap)
     axs[0].set_title(f'{img_name} central slice \n in sagittal view', fontsize=fontsize)
-    img1 = img[0, :, :, int(shape[1] / 2), :].permute(dims=(1, 2, 0)).squeeze().numpy()
-    axs[1].imshow(img1, cmap=cmap)
+    img1 = axs[1].imshow(img[0, :, :, int(shape[1] / 2), :].permute(dims=(1, 2, 0)).squeeze().numpy(), cmap=cmap)
     axs[1].set_title(f'{img_name} central slice \n in coronal view', fontsize=fontsize)
-    img2 = img[0, :, :, :, int(shape[0] / 2)].permute(dims=(1, 2, 0)).squeeze().numpy()
-    axs[2].imshow(img2, cmap=cmap)
+    img2 = axs[2].imshow(img[0, :, :, :, int(shape[0] / 2)].permute(dims=(1, 2, 0)).squeeze().numpy(), cmap=cmap)
     axs[2].set_title(f'{img_name} central slice \n in axial view', fontsize=fontsize)
     if show_colorbar and fig is not None:
-        fig.colorbar(img1, ax=axs[0])
-        fig.colorbar(img1, ax=axs[1])
-        fig.colorbar(img2, ax=axs[2])
+        fig.colorbar(img1, ax=axs[0], orientation='horizontal')
+        fig.colorbar(img1, ax=axs[1], orientation='horizontal')
+        fig.colorbar(img2, ax=axs[2], orientation='horizontal')
 
 def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.Tensor,
-                  deformation: torch.Tensor, logSimga: None):
-    if logSimga is None:
+                  deformation: torch.Tensor, log_sigma: torch.Tensor = None):
+    if log_sigma is None:
         nrow = 6
     else:
         nrow = 7
@@ -53,8 +50,8 @@ def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.T
     fill_subplots(fixed - registered, axs=axs[4, :], img_name='Fix-Reg')
     deform_ = (deformation + 5) / 10
     fill_subplots(deform_, axs=axs[5, :], img_name='Def.', cmap=None)
-    if logSimga:
-        fill_subplots(logSimga, axs=axs[6: 0], img_name='LogSigma', cmap=None, fig=fig, show_colorbar=True)
+    if log_sigma is not None:
+        fill_subplots(log_sigma, axs=axs[6, :], img_name='LogSigma', cmap=None, fig=fig, show_colorbar=True)
     return fig
 
 

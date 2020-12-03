@@ -31,6 +31,7 @@ import voxelmorph as vxm
 from scripts.torch.utils import apply_model
 from scripts.torch.utils import calc_scores
 
+
 def main():
     parser = parse_args()
     args = parser.parse_args()
@@ -266,8 +267,8 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
         for step in range(args.steps_per_epoch):
             step_start_time = time.time()
 
-            loss, loss_list, _, _, _ = apply_model(model=model, generator=generator, device=device,
-                                                   losses=losses, weights=weights)
+            loss, loss_list, _, _, y_pred = apply_model(model=model, generator=generator, device=device,
+                                                        losses=losses, weights=weights)
             loss_info = 'loss: %.6f  (%s)' % (loss.item(), ', '.join(loss_list))
 
             # backpropagate and optimize
@@ -290,8 +291,12 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
 
                 display_count += 1
                 model.eval()
-                tensorboard_log(model, test_generator, loss_names, device, loss_list, writer, ssim=ssim,
-                                global_step=global_step)
+                if args.use_probs:
+                    log_sigma = y_pred[-1][:, 1:2, ...].detach().cpu()
+                else:
+                    log_sigma = None
+                tensorboard_log(model, test_generator, loss_names, device, loss_list,  writer, ssim=ssim,
+                                log_sigma=log_sigma, global_step=global_step)
                 evaluate_with_segmentation(model, test_generator, device=device, args=args, writer=writer,
                                            global_step=global_step, transformer=transformer,
                                            calc_statistics=calc_statistics)
@@ -301,14 +306,14 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
 
 
 def tensorboard_log(model, test_generator, loss_names, device, loss_list,
-                    writer: SummaryWriter, ssim: vxm.losses.SSIM, global_step=0):
+                    writer: SummaryWriter, ssim: vxm.losses.SSIM, log_sigma=None, global_step=0):
     with torch.no_grad():
         inputs, y_true, y_pred = apply_model(model=model, generator=test_generator, device=device,
                                              is_test=True, has_seg=True)
     ddf = y_pred[-1].detach()
     y_pred = y_pred[0]
     figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred.cpu(),
-                                           ddf.cpu())
+                                           ddf.cpu(), log_sigma=log_sigma)
     writer.add_figure(tag='volumes',
                       figure=figure,
                       global_step=global_step)
@@ -349,7 +354,8 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
     for step in range(args.num_test_imgs):
         print(step)
         # generate scores for logging on tensorboard
-        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std = calc_scores(device, mask_values, model, transformer,
+        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std = calc_scores(device, mask_values, model,
+                                                                                 transformer,
                                                                                  test_generator=test_generator,
                                                                                  num_statistics_runs=args.num_statistics_runs,
                                                                                  calc_statistics=calc_statistics)
