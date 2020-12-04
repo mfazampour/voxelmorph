@@ -53,7 +53,7 @@ def set_colorbar(img, ax, fig, fontsize):
 
 def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.Tensor, jacob: torch.Tensor,
                   deformation: torch.Tensor, log_sigma: torch.Tensor = None, mean: torch.Tensor = None):
-    nrow = 7
+    nrow = 9
     if log_sigma is not None:
         nrow += 3
     if mean is not None:
@@ -68,10 +68,11 @@ def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.T
     fill_subplots(fixed - moving, axs=axs[2, :], img_name='Fix-Mov')
     fill_subplots(registered, axs=axs[3, :], img_name='Registered')
     fill_subplots(fixed - registered, axs=axs[4, :], img_name='Fix-Reg')
-    deform_ = (deformation + 5) / 10
-    fill_subplots(deform_, axs=axs[5, :], img_name='Def.', cmap=None)
-    fill_subplots(jacob, axs=axs[6, :], img_name='Det. Jacob.', cmap='RdBu', fig=fig, show_colorbar=True)
-    idx = 6
+    fill_subplots(deformation[:, 0:1, ...], axs=axs[5, ...], img_name='Def. X', cmap='RdBu', fig=fig, show_colorbar=True)
+    fill_subplots(deformation[:, 1:2, ...], axs=axs[6, ...], img_name='Def. Y', cmap='RdBu', fig=fig, show_colorbar=True)
+    fill_subplots(deformation[:, 2:3, ...], axs=axs[7, ...], img_name='Def. Z', cmap='RdBu', fig=fig, show_colorbar=True)
+    fill_subplots(jacob, axs=axs[8, :], img_name='Det. Jacob.', cmap='RdBu', fig=fig, show_colorbar=True)
+    idx = 8
     if log_sigma is not None:
         fill_subplots(log_sigma[:, 0:1, ...], axs=axs[idx + 1, ...], img_name='LogSigma X', cmap='RdBu', fig=fig, show_colorbar=True)
         fill_subplots(log_sigma[:, 1:2, ...], axs=axs[idx + 2, ...], img_name='LogSigma Y', cmap='RdBu', fig=fig, show_colorbar=True)

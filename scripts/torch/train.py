@@ -246,10 +246,10 @@ def create_optimizers(args, bidir, model):
     # prepare deformation loss
     if args.use_probs:
         losses += [vxm.losses.KL(args.kl_lambda).loss]
-        loss_names += 'KL'
+        loss_names += ['KL']
     else:
         losses += [vxm.losses.Grad('l2', loss_mult=args.int_downsize).loss]
-        loss_names += 'Regularization'
+        loss_names += ['Regularization']
     weights += [args.weight]
     return losses, optimizer, weights, loss_names
 
@@ -318,12 +318,15 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
     figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred.cpu(),
                                            jacob=torch.tensor(jacob).view_as(y_true[0]),
                                            deformation=ddf.cpu(), log_sigma=log_sigma, mean=mean)
-    print(f'Det. Jacob. of DDF has {len(jacob[jacob < 0])} negative elements, percentage: {len(jacob[jacob < 0])/len(jacob)}')
     writer.add_figure(tag='volumes',
                       figure=figure,
                       global_step=global_step)
     for name, value in zip(loss_names, list(map(float, loss_list))):
         writer.add_scalar(f'loss/{name}', value, global_step=global_step)
+
+    print(f'Det. Jacob. of DDF has {len(jacob[jacob < 0])} negative elements, percentage: {len(jacob[jacob < 0])/len(jacob)}')
+    writer.add_scalar(f'jacob/negative count', len(jacob[jacob < 0]), global_step=global_step)
+    writer.add_scalar(f'jacob/negative ratio', len(jacob[jacob < 0])/len(jacob), global_step=global_step)
 
     fix_to_mov = torch.mean((y_true[0][y_true[0] != 0] - inputs[0][y_true[0] != 0]) ** 2).cpu()
     fix_to_reg = torch.mean((y_true[0][y_true[0] != 0] - y_pred[y_true[0] != 0]) ** 2).cpu()
