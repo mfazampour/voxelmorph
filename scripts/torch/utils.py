@@ -39,24 +39,28 @@ def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.n
     seg_fixed = y_true[-1].clone()
     seg_moving = inputs[-1].clone()
     dvf = y_pred[-1].detach()
-    morphed = transformer(seg_moving, dvf)
-    morphed = morphed.round()
+    seg_morphed = transformer(seg_moving, dvf)
+    seg_morphed = seg_morphed.round()
     shape = list(seg_fixed.shape)
     shape[1] = len(mask_values)
     one_hot_fixed = torch.zeros(shape, device=device)
+    one_hot_moving = torch.zeros(shape, device=device)
     one_hot_morphed = torch.zeros(shape, device=device)
     for i, (val) in enumerate(mask_values):
         one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
-        one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
+        one_hot_moving[:, i, seg_moving[0, 0, ...] == val] = 1
+        one_hot_morphed[:, i, seg_morphed[0, 0, ...] == val] = 1
         seg_fixed[:, 0, seg_fixed[0, 0, ...] == val] = i
-        morphed[:, 0, morphed[0, 0, ...] == val] = i
+        seg_morphed[:, 0, seg_morphed[0, 0, ...] == val] = i
+        seg_moving[:, 0, seg_moving[0, 0, ...] == val] = i
     dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False)
     hd_score = torch.zeros_like(dice_score)
     asd_score = torch.zeros_like(dice_score)
     for i in range(len(mask_values)):
-        hd_score[0, i] = compute_hausdorff_distance(morphed, seg_fixed, i)
-        asd_score[0, i] = compute_average_surface_distance(morphed, seg_fixed, i)
-    return asd_score, dice_score, hd_score
+        hd_score[0, i] = compute_hausdorff_distance(seg_morphed, seg_fixed, i)
+        asd_score[0, i] = compute_average_surface_distance(seg_morphed, seg_fixed, i)
+    seg_maps = (seg_fixed.cpu(), seg_moving.cpu(), seg_morphed.cpu())
+    return asd_score, dice_score, hd_score, seg_maps
 
 
 def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.nn.Module,
@@ -73,7 +77,7 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
         if test_generator is not None:
             inputs, y_true = next(test_generator)
         for n in range(reps):
-            asd_score, dice_score, hd_score = get_scores(device, mask_values, model, transformer,
+            asd_score, dice_score, hd_score, seg_maps = get_scores(device, mask_values, model, transformer,
                                                          inputs=inputs, y_true=y_true)
             dice_scores.append(dice_score)
             hd_scores.append(hd_score)
@@ -88,4 +92,4 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
             asd_std = torch.cat(asd_scores).std(dim=0, keepdim=True)
         else:
             dice_std, hd_std, asd_std = (torch.tensor([0.0]), torch.tensor([0.0]), torch.tensor([0.0]))
-        return dice_score, hd_score, asd_score, dice_std, hd_std, asd_std
+        return dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps

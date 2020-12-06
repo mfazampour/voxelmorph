@@ -79,7 +79,7 @@ def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True,
 
     vol_names, seg_names = load_vol_pathes(patient_list_src, source_folder, img_pattern=img_pattern, seg_pattern=seg_pattern, is_train=is_train)
     transform = biobank_transform(target_shape, target_spacing=target_spacing)
-    transform_seg = biobank_transform(target_shape, min_value=None)
+    transform_seg = biobank_transform(target_shape, target_spacing=target_spacing, min_value=None)
 
     while True:
         # generate [batchsize] random image indices
@@ -93,8 +93,7 @@ def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True,
 
         # optionally load segmentations and concatenate
         if return_segs:
-            segs = [np.expand_dims(transform_seg(py.utils.load_volfile(seg_names[i], **load_params)), axis=-1) for i in
-                    indices]
+            segs = [transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(seg_names[i], **load_params))).data.unsqueeze(dim=-1) for i in indices]
             vols.append(np.concatenate(segs, axis=0))
 
         yield tuple(vols)

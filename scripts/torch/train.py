@@ -21,6 +21,7 @@ from datetime import datetime
 import numpy as np
 import torch
 # import napari
+from GPUtil import GPUtil
 from torch.utils.tensorboard import SummaryWriter
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
@@ -303,8 +304,11 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
                                            global_step=global_step, transformer=transformer,
                                            calc_statistics=calc_statistics)
                 model.train()
+        torch.cuda.empty_cache()
+        GPUtil.showUtilization()
     # final model save
     model.save(os.path.join(model_dir, '%04d.pt' % args.epochs))
+
 
 
 def tensorboard_log(model, test_generator, loss_names, device, loss_list,
@@ -324,9 +328,8 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
     for name, value in zip(loss_names, list(map(float, loss_list))):
         writer.add_scalar(f'loss/{name}', value, global_step=global_step)
 
-    print(f'Det. Jacob. of DDF has {len(jacob[jacob < 0])} negative elements, percentage: {len(jacob[jacob < 0])/len(jacob)}')
-    writer.add_scalar(f'jacob/negative count', len(jacob[jacob < 0]), global_step=global_step)
-    writer.add_scalar(f'jacob/negative ratio', len(jacob[jacob < 0])/len(jacob), global_step=global_step)
+    writer.add_scalar(f'jacob/negative count', jacob[jacob < 0].size, global_step=global_step)
+    writer.add_scalar(f'jacob/negative ratio', jacob[jacob < 0].size/jacob.size, global_step=global_step)
 
     fix_to_mov = torch.mean((y_true[0][y_true[0] != 0] - inputs[0][y_true[0] != 0]) ** 2).cpu()
     fix_to_reg = torch.mean((y_true[0][y_true[0] != 0] - y_pred[y_true[0] != 0]) ** 2).cpu()
@@ -362,7 +365,7 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
     for step in range(args.num_test_imgs):
         print(step)
         # generate scores for logging on tensorboard
-        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std = calc_scores(device, mask_values, model,
+        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps = calc_scores(device, mask_values, model,
                                                                                  transformer,
                                                                                  test_generator=test_generator,
                                                                                  num_statistics_runs=args.num_statistics_runs,
@@ -386,6 +389,11 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
     mean_asd = torch.cat(list_asd).mean(dim=0)
     for i, (val) in enumerate(mean_asd):
         writer.add_scalar(f'ASD/{structures_dict[int(mask_values[i])]}', scalar_value=val, global_step=global_step)
+
+    figure = vxm.torch.utils.create_seg_figure(*seg_maps)
+    writer.add_figure(tag='seg_maps',
+                      figure=figure,
+                      global_step=global_step)
 
     if calc_statistics:
         log_statistics(torch.cat(list_hd_std), structures_dict.values(), writer=writer,

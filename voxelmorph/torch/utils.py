@@ -52,7 +52,7 @@ def set_colorbar(img, ax, fig, fontsize):
 
 
 def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.Tensor, jacob: torch.Tensor,
-                  deformation: torch.Tensor, log_sigma: torch.Tensor = None, mean: torch.Tensor = None):
+                  deformation: torch.Tensor, log_sigma: torch.Tensor = None, mean: torch.Tensor = None) -> plt.Figure:
     nrow = 9
     if log_sigma is not None:
         nrow += 3
@@ -82,6 +82,20 @@ def create_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.T
         fill_subplots(mean[:, 0:1, ...], axs=axs[idx + 1, ...], img_name='mean X', cmap='RdBu', fig=fig, show_colorbar=True)
         fill_subplots(mean[:, 1:2, ...], axs=axs[idx + 2, ...], img_name='mean Y', cmap='RdBu', fig=fig, show_colorbar=True)
         fill_subplots(mean[:, 2:3, ...], axs=axs[idx + 3, ...], img_name='mean Z', cmap='RdBu', fig=fig, show_colorbar=True)
+    return fig
+
+def create_seg_figure(fixed: torch.Tensor, moving: torch.Tensor, registered: torch.Tensor) -> plt.Figure:
+    nrow = 5
+    ncol = 3
+    axs, fig = init_figure(ncol, nrow)
+
+    # fig, axs = plt.subplots(5, 3)
+    set_axs_attribute(axs)
+    fill_subplots(fixed, axs=axs[0, :], img_name='Fixed', cmap='jet')
+    fill_subplots(moving, axs=axs[1, :], img_name='Moving', cmap='jet')
+    fill_subplots((fixed - moving).abs() * fixed, axs=axs[2, :], img_name='Fix-Mov', cmap='jet')
+    fill_subplots(registered, axs=axs[3, :], img_name='Registered', cmap='jet')
+    fill_subplots((fixed - registered).abs() * fixed, axs=axs[4, :], img_name='Fix-Reg', cmap='jet')
     return fig
 
 

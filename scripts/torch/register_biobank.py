@@ -137,7 +137,7 @@ if args.use_probs and args.moving_seg:
                 fixed.image.tensor.unsqueeze(dim=0).cuda(), moving.label.tensor.unsqueeze(dim=0).cuda()]
     y_true = [fixed.label.tensor.unsqueeze(dim=0).cuda()]
     with torch.no_grad():
-        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std = \
+        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps = \
             calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
                         y_true=y_true, num_statistics_runs=args.num_statistics_runs, calc_statistics=True)
 
