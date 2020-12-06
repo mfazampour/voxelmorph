@@ -19,7 +19,7 @@ def fmt(x, pos):
     a, b = '{:.1e}'.format(x).split('e')
     b = int(b)
     # return r'${} \ e^{{{}}}$'.format(a, b)
-    if pos % 3 == 0:
+    if pos % 3 == 0 and b != 0:
         return r'${} \ e^{{{}}}$'.format(a, b)
     else:
         return r'${}$'.format(a)
