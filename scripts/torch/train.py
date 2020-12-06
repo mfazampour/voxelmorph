@@ -53,8 +53,9 @@ def main():
     log_input_params(args, writer)
 
     generator = create_data_generator(args)
-
-    test_generator = create_data_generator(args, is_train=False)
+    args_test = argparse.Namespace(**vars(args))
+    args_test.batch_size = 1
+    test_generator = create_data_generator(args_test, is_train=False)
 
     # extract shape from sampled input
     inshape = args.inshape
@@ -64,8 +65,8 @@ def main():
     nb_gpus = len(gpus)
     device = 'cuda'
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-    assert args.batch_size >= nb_gpus, 'Batch size (%d) should be no less than the number of gpus (%d)' % (
-        args.batch_size, nb_gpus)
+    # assert args.batch_size >= nb_gpus, 'Batch size (%d) should be no less than the number of gpus (%d)' % (
+    #     args.batch_size, nb_gpus)
 
     model = create_model(args, bidir, device, inshape, nb_gpus)
 
