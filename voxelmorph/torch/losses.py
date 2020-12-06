@@ -348,22 +348,26 @@ class KL:
 
         # prepare inputs
         ndims = len(y_pred.shape) - 2
-        mean = y_pred[0, ...]
-        log_sigma = y_pred[1, ...]
+        loss = torch.tensor([0], device=y_true.device, dtype=y_true.dtype)
+        for i in range(y_pred.shape[0]):
 
-        # compute the degree matrix (only needs to be done once)
-        # we usually can't compute this until we know the ndims,
-        # which is a function of the data
-        if self.D is None:
-            self.D = self._degree_matrix(y_true.shape[-3:]).to(y_pred.device)
+            mean = y_pred[i, :ndims, ...]
+            log_sigma = y_pred[i, ndims:, ...]
 
-        # sigma terms
-        sigma_term = self.prior_lambda * self.D * torch.exp(log_sigma) - log_sigma
-        sigma_term = sigma_term.mean()
+            # compute the degree matrix (only needs to be done once)
+            # we usually can't compute this until we know the ndims,
+            # which is a function of the data
+            if self.D is None:
+                self.D = self._degree_matrix(y_true.shape[-3:]).to(y_pred.device)
 
-        # precision terms
-        # note needs 0.5 twice, one here (inside self.prec_loss), one below
-        prec_term = self.prior_lambda * self.prec_loss(mean)
+            # sigma terms
+            sigma_term = self.prior_lambda * self.D * torch.exp(log_sigma) - log_sigma
+            sigma_term = sigma_term.mean()
 
-        # combine terms
-        return 0.5 * ndims * (sigma_term + prec_term)  # ndims because we averaged over dimensions as well
+            # precision terms
+            # note needs 0.5 twice, one here (inside self.prec_loss), one below
+            prec_term = self.prior_lambda * self.prec_loss(mean)
+
+            # combine terms
+            loss += 0.5 * ndims * (sigma_term + prec_term)  # ndims because we averaged over dimensions as well
+        return loss/y_pred.shape[0]

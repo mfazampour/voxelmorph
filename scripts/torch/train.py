@@ -294,8 +294,8 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
                 display_count += 1
                 model.eval()
                 if args.use_probs:
-                    log_sigma = y_pred[-1][1:2, ...].detach().cpu()
-                    mean = y_pred[-1][0:1, ...].detach().cpu()
+                    mean = y_pred[-1][0:1, :3, ...].detach().cpu()
+                    log_sigma = y_pred[-1][0:1, 3:, ...].detach().cpu()
                 else:
                     log_sigma = None
                     mean = None

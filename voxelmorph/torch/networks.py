@@ -194,7 +194,7 @@ class VxmDense(LoadableModel):
         if self.use_probs:
             flow_mean = self.flow(x)
             flow_logsigma = self.flow_logsigma(x)
-            flow_params = torch.cat([flow_mean, flow_logsigma])
+            flow_params = torch.cat([flow_mean, flow_logsigma], dim=1)
             flow_field = layers.SampleNormalLogVar()([flow_mean, flow_logsigma])
         else:
             flow_field = self.flow(x)
