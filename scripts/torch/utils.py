@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from monai.metrics import compute_meandice
 from monai.metrics import compute_hausdorff_distance
@@ -93,3 +94,24 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
         else:
             dice_std, hd_std, asd_std = (torch.tensor([0.0]), torch.tensor([0.0]), torch.tensor([0.0]))
         return dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps
+
+
+def create_toy_sample(img: torch.Tensor, mask: torch.Tensor, method: str = 'noise', num_changes=1, fill=0, sigma=1):
+    toy = img.clone()
+    num_regions = len(mask.unique())
+    #  exclude background from changing
+    for i in range(num_changes):
+        region = np.random.randint(low=1, high=num_regions, size=1)
+        im_indices = mask == mask.unique()[region]
+        if method == 'swap':
+            swap_indices(toy, indices=im_indices)
+        elif method == 'constant':
+            toy[im_indices] = fill
+        elif method == 'noise':
+            toy[im_indices] = torch.rand(img.shape)[im_indices] * sigma + fill
+        else:
+            NotImplementedError()
+    return toy
+
+def swap_indices(img: torch.Tensor, indices):
+    return img

@@ -30,6 +30,7 @@ os.environ['VXM_BACKEND'] = 'pytorch'
 import voxelmorph as vxm
 
 from scripts.torch.utils import calc_scores
+from scripts.torch.utils import create_toy_sample
 
 
 def biobank_transform(target_shape=None, min_value=0, max_value=1):
@@ -61,6 +62,7 @@ parser.add_argument('--inshape', type=int, nargs='+',
 parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
 parser.add_argument('--num-statistics-runs', type=int, default=50,
                         help='number of runs to get each statistic')
+parser.add_argument('--use-toy', action='store_true', help='create a toy example out of moving before registration')
 args = parser.parse_args()
 
 # device handling
@@ -100,9 +102,15 @@ structures_dict = {0: 'backround',
 
 # predict
 with torch.no_grad():
-    moved, warp = model(moving.image.tensor.unsqueeze(dim=0).cuda(),
-                        fixed.image.tensor.unsqueeze(dim=0).cuda(),
-                        registration=True)
+    if args.use_toy:
+        toy = create_toy_sample(moving.image.tensor, mask=moving.label.tensor, method='constant', num_changes=5)
+        moved, warp = model(toy.unsqueeze(dim=0).cuda(),
+                            fixed.image.tensor.unsqueeze(dim=0).cuda(),
+                            registration=True)
+    else:
+        moved, warp = model(moving.image.tensor.unsqueeze(dim=0).cuda(),
+                            fixed.image.tensor.unsqueeze(dim=0).cuda(),
+                            registration=True)
 
     # save moved image
     if args.moved:
@@ -133,8 +141,12 @@ with torch.no_grad():
 if args.use_probs and args.moving_seg:
     transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
     mask_values = list(structures_dict.keys())
-    input_ = [moving.image.tensor.unsqueeze(dim=0).cuda(),
-                fixed.image.tensor.unsqueeze(dim=0).cuda(), moving.label.tensor.unsqueeze(dim=0).cuda()]
+    if args.use_toy:
+        input_ = [toy.unsqueeze(dim=0).cuda(),
+                  fixed.image.tensor.unsqueeze(dim=0).cuda(), moving.label.tensor.unsqueeze(dim=0).cuda()]
+    else:
+        input_ = [moving.image.tensor.unsqueeze(dim=0).cuda(),
+                    fixed.image.tensor.unsqueeze(dim=0).cuda(), moving.label.tensor.unsqueeze(dim=0).cuda()]
     y_true = [fixed.label.tensor.unsqueeze(dim=0).cuda()]
     with torch.no_grad():
         dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps = \
