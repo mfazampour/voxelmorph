@@ -20,10 +20,11 @@ import torchio
 from torchio.transforms import (
     RescaleIntensity,
     Compose,
-    CropOrPad
+    CropOrPad,
+    Resample
 )
 
-from monai.metrics import compute_meandice
+from monai.metrics import compute_meandice, compute_hausdorff_distance, compute_average_surface_distance
 
 # import voxelmorph with pytorch backend
 os.environ['VXM_BACKEND'] = 'pytorch'
@@ -33,12 +34,14 @@ from scripts.torch.utils import calc_scores
 from scripts.torch.utils import create_toy_sample
 
 
-def biobank_transform(target_shape=None, min_value=0, max_value=1):
+def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None):
     if min_value is None:
         transforms = []
     else:
         rescale = RescaleIntensity((min_value, max_value))
         transforms = [rescale]
+    if target_spacing is not None:
+        transforms.append(Resample(target_spacing))
     if target_shape is not None:
         transforms.append(CropOrPad(target_shape=target_shape))
     return Compose(transforms)
@@ -59,6 +62,7 @@ parser.add_argument('--multichannel', action='store_true', help='specify that da
 parser.add_argument('--inshape', type=int, nargs='+',
                         help='after cropping shape of input. '
                              'default is equal to image size. specify if the input can\'t path through UNet')
+parser.add_argument('--target-spacing', type=float, default=1, help='target spacing of the inputs to the network')
 parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
 parser.add_argument('--num-statistics-runs', type=int, default=50,
                         help='number of runs to get each statistic')
@@ -83,10 +87,16 @@ if args.moving_seg and args.fixed_seg:
 moving = torchio.Subject(moving)
 fixed = torchio.Subject(fixed)
 
-transform = biobank_transform(args.inshape)
+trasform = biobank_transform(target_shape=args.inshape, target_spacing=args.target_spacing)
+full_size = biobank_transform(target_spacing=1.0)
 
-moving = transform(moving)
-fixed = transform(fixed)
+moving = trasform(moving)
+fixed = trasform(fixed)
+
+moving_fs = full_size(moving)
+fixed_fs = full_size(fixed)
+
+full_size_vxm = vxm.layers.ResizeTransform(0.5, 3)
 
 # load and set up model
 model = vxm.networks.VxmDense.load(args.model, device)
@@ -103,7 +113,7 @@ structures_dict = {0: 'backround',
 # predict
 with torch.no_grad():
     if args.use_toy:
-        toy = create_toy_sample(moving.image.tensor, mask=moving.label.tensor, method='constant', num_changes=5)
+        toy = create_toy_sample(moving.image.tensor, mask=moving.label.tensor, method='noise', num_changes=5)
         moved, warp = model(toy.unsqueeze(dim=0).cuda(),
                             fixed.image.tensor.unsqueeze(dim=0).cuda(),
                             registration=True)
@@ -118,20 +128,32 @@ with torch.no_grad():
         vxm.py.utils.save_volfile(moved, args.moved)
 
     if args.moving_seg:
-        transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
+        transformer = vxm.layers.SpatialTransformer(size=moving.shape[-3:], mode='nearest').to(device)
         morphed = transformer(moving.label.tensor.unsqueeze(dim=0).cuda(), warp)
+        morphed_im = torchio.LabelMap(tensor=morphed.cpu().squeeze(0), affine=moving.image.affine)
+        morphed = full_size(morphed_im).data.to(device).unsqueeze(0)
         mask_values = list(structures_dict.keys())
-        shape = list(fixed.label.tensor.unsqueeze(dim=0).shape)
+        shape = list(fixed_fs.label.tensor.unsqueeze(dim=0).shape)
         shape[1] = len(mask_values)
         one_hot_fixed = torch.zeros(shape, device=device)
         one_hot_morphed = torch.zeros(shape, device=device)
+        seg_fixed = fixed_fs.label.tensor.unsqueeze(dim=0)
         for i, (val) in enumerate(mask_values):
-            one_hot_fixed[:, i, fixed.label.tensor.unsqueeze(dim=0)[0, 0, ...] == val] = 1
+            one_hot_fixed[:, i, seg_fixed[0, 0, ...] == val] = 1
             one_hot_morphed[:, i, morphed[0, 0, ...] == val] = 1
+            seg_fixed[:, 0, seg_fixed[0, 0, ...] == val] = i
+            morphed[:, 0, morphed[0, 0, ...] == val] = i
         dice_score = compute_meandice(one_hot_fixed, one_hot_morphed, to_onehot_y=False).cpu()
 
-        for i, (val) in enumerate(dice_score.squeeze()):
-            print(f'dice score for {structures_dict[int(mask_values[i])]} is {val}')
+        hd_score = torch.zeros_like(dice_score)
+        asd_score = torch.zeros_like(dice_score)
+        for i in range(len(mask_values)):
+            # hd_score[0, i] = compute_hausdorff_distance(morphed, seg_fixed, i)
+            asd_score[0, i] = compute_average_surface_distance(morphed, seg_fixed, i)
+
+        for i, (dice, asd) in enumerate(zip(dice_score.squeeze(), asd_score.squeeze())):
+            print(f'dice score for {structures_dict[int(mask_values[i])]} is {dice}')
+            print(f'asd for {structures_dict[int(mask_values[i])]} is {asd}')
 
     # save warp
     if args.warp:
