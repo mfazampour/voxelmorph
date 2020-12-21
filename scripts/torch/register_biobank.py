@@ -201,7 +201,8 @@ if args.use_probs and args.moving_seg:
     with torch.no_grad():
         dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps, dvfs = \
             calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
-                        y_true=y_true, num_statistics_runs=args.num_statistics_runs, calc_statistics=True)
+                        y_true=y_true, num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
+                        affine=moving.image.affine)
 
     print('---------------------------------------')
     print('stats')
