@@ -61,7 +61,7 @@ def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.n
         hd_score[0, i] = compute_hausdorff_distance(seg_morphed, seg_fixed, i)
         asd_score[0, i] = compute_average_surface_distance(seg_morphed, seg_fixed, i)
     seg_maps = (seg_fixed.cpu(), seg_moving.cpu(), seg_morphed.cpu())
-    return asd_score, dice_score, hd_score, seg_maps
+    return asd_score, dice_score, hd_score, seg_maps, dvf
 
 
 def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.nn.Module,
@@ -73,13 +73,17 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
     dice_scores = []
     hd_scores = []
     asd_scores = []
+    seg_maps = []
+    dvfs = []
 
     with torch.no_grad():
         if test_generator is not None:
             inputs, y_true = next(test_generator)
         for n in range(reps):
-            asd_score, dice_score, hd_score, seg_maps = get_scores(device, mask_values, model, transformer,
+            asd_score, dice_score, hd_score, seg_map, dvf = get_scores(device, mask_values, model, transformer,
                                                          inputs=inputs, y_true=y_true)
+            seg_maps.append(seg_map)
+            dvfs.append(dvf)
             dice_scores.append(dice_score)
             hd_scores.append(hd_score)
             asd_scores.append(asd_score)
@@ -93,7 +97,7 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
             asd_std = torch.cat(asd_scores).std(dim=0, keepdim=True)
         else:
             dice_std, hd_std, asd_std = (torch.tensor([0.0]), torch.tensor([0.0]), torch.tensor([0.0]))
-        return dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps
+        return dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps, dvfs
 
 
 def create_toy_sample(img: torch.Tensor, mask: torch.Tensor, method: str = 'noise', num_changes=1, fill=0, sigma=1):

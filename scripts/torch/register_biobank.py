@@ -23,6 +23,8 @@ from torchio.transforms import (
     CropOrPad,
     Resample
 )
+import SimpleITK as sitk
+# from tvtk.api import tvtk, write_data
 
 from monai.metrics import compute_meandice, compute_hausdorff_distance, compute_average_surface_distance
 
@@ -45,6 +47,29 @@ def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacin
     if target_shape is not None:
         transforms.append(CropOrPad(target_shape=target_shape))
     return Compose(transforms)
+
+# def save_field_to_disk(field, file_path):
+#     field = field.cpu().numpy()
+#
+#     field_x = field[0]
+#     field_y = field[1]
+#     field_z = field[2]
+#
+#     dim = field.shape[1:]  # FIXME: why is the no. cells < no. points?
+#
+#     vectors = np.empty(field_x.shape + (3,), dtype=float)
+#     vectors[..., 0] = field_x
+#     vectors[..., 1] = field_y
+#     vectors[..., 2] = field_z
+#
+#     vectors = vectors.transpose(2, 1, 0, 3).copy()
+#     vectors.shape = vectors.size // 3, 3
+#
+#     im_vtk = tvtk.ImageData(spacing=(1, 1, 1), origin=(0, 0, 0), dimensions=dim)
+#     im_vtk.point_data.vectors = vectors
+#     im_vtk.point_data.vectors.name = 'field'
+#
+#     write_data(im_vtk, file_path)
 
 
 # parse commandline args
@@ -88,7 +113,8 @@ moving = torchio.Subject(moving)
 fixed = torchio.Subject(fixed)
 
 trasform = biobank_transform(target_shape=args.inshape, target_spacing=args.target_spacing)
-full_size = biobank_transform(target_spacing=1.0)
+full_size = biobank_transform(target_spacing=1.0, min_value=None)
+repad = biobank_transform(target_shape=moving.shape[-3:], min_value=None)
 
 moving = trasform(moving)
 fixed = trasform(fixed)
@@ -124,8 +150,9 @@ with torch.no_grad():
 
     # save moved image
     if args.moved:
-        moved = moved.detach().cpu().numpy().squeeze()
-        vxm.py.utils.save_volfile(moved, args.moved)
+        img = torchio.ScalarImage(tensor=moved[0, ...].cpu())
+        img = repad(img)
+        img.save(args.moved)
 
     if args.moving_seg:
         transformer = vxm.layers.SpatialTransformer(size=moving.shape[-3:], mode='nearest').to(device)
@@ -157,8 +184,9 @@ with torch.no_grad():
 
     # save warp
     if args.warp:
-        warp = warp.detach().cpu().numpy().squeeze()
-        vxm.py.utils.save_volfile(warp, args.warp)
+        img = torchio.ScalarImage(tensor=warp[0, ...].cpu())
+        img = repad(img)
+        img.save(args.warp)
 
 if args.use_probs and args.moving_seg:
     transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
@@ -171,7 +199,7 @@ if args.use_probs and args.moving_seg:
                     fixed.image.tensor.unsqueeze(dim=0).cuda(), moving.label.tensor.unsqueeze(dim=0).cuda()]
     y_true = [fixed.label.tensor.unsqueeze(dim=0).cuda()]
     with torch.no_grad():
-        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps = \
+        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps, dvfs = \
             calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
                         y_true=y_true, num_statistics_runs=args.num_statistics_runs, calc_statistics=True)
 
@@ -182,6 +210,18 @@ if args.use_probs and args.moving_seg:
                                                  asd_score.squeeze(), asd_std.squeeze())):
         print(f'Dice, {structures_dict[int(mask_values[i])]}, {d}, {d_std}')
         print(f'MSD, {structures_dict[int(mask_values[i])]}, {a}, {a_std}')
+
+    for i, (ddf) in enumerate(dvfs):
+        jacob = vxm.py.utils.jacobian_determinant(ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
+        print(f'jacob/negative count, {jacob[jacob < 0].size}, sample, {i}')
+        print(f'jacob/negative ratio, {jacob[jacob < 0].size / jacob.size}, sample, {i}')
+        img = sitk.GetImageFromArray(ddf[0, ...].cpu().permute(1, 2, 3, 0))
+        sitk.WriteImage(img, f'/tmp/ddf{i}.mhd')
+        # save_field_to_disk(ddf[0, ...].cpu(), f'/tmp/ddf{i}.nii.gz')
+        # remove the flag for BinaryData from the mhd file :( :strange:
+
+
+
 
 
 

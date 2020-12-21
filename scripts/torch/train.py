@@ -299,7 +299,7 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
                 else:
                     log_sigma = None
                     mean = None
-                tensorboard_log(model, test_generator, loss_names, device, loss_list,  writer, ssim=ssim,
+                tensorboard_log(model, test_generator, loss_names, device, loss_list, writer, ssim=ssim,
                                 log_sigma=log_sigma, mean=mean, global_step=global_step)
                 evaluate_with_segmentation(model, test_generator, device=device, args=args, writer=writer,
                                            global_step=global_step, transformer=transformer,
@@ -309,7 +309,6 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
         GPUtil.showUtilization()
     # final model save
     model.save(os.path.join(model_dir, '%04d.pt' % args.epochs))
-
 
 
 def tensorboard_log(model, test_generator, loss_names, device, loss_list,
@@ -330,7 +329,7 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
         writer.add_scalar(f'loss/{name}', value, global_step=global_step)
 
     writer.add_scalar(f'jacob/negative count', jacob[jacob < 0].size, global_step=global_step)
-    writer.add_scalar(f'jacob/negative ratio', jacob[jacob < 0].size/jacob.size, global_step=global_step)
+    writer.add_scalar(f'jacob/negative ratio', jacob[jacob < 0].size / jacob.size, global_step=global_step)
 
     fix_to_mov = torch.mean((y_true[0][y_true[0] != 0] - inputs[0][y_true[0] != 0]) ** 2).cpu()
     fix_to_reg = torch.mean((y_true[0][y_true[0] != 0] - y_pred[y_true[0] != 0]) ** 2).cpu()
@@ -363,14 +362,16 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
                        50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
                        53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
     mask_values = list(structures_dict.keys())
+    seg_maps = []
     for step in range(args.num_test_imgs):
         print(step)
         # generate scores for logging on tensorboard
-        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps = calc_scores(device, mask_values, model,
-                                                                                 transformer,
-                                                                                 test_generator=test_generator,
-                                                                                 num_statistics_runs=args.num_statistics_runs,
-                                                                                 calc_statistics=calc_statistics)
+        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps, _ = calc_scores(device, mask_values,
+                                                                                              model,
+                                                                                              transformer,
+                                                                                              test_generator=test_generator,
+                                                                                              num_statistics_runs=args.num_statistics_runs,
+                                                                                              calc_statistics=calc_statistics)
         list_dice.append(dice_score.cpu())
         list_hd.append(hd_score.cpu())
         list_asd.append(asd_score.cpu())
@@ -391,10 +392,12 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
     for i, (val) in enumerate(mean_asd):
         writer.add_scalar(f'ASD/{structures_dict[int(mask_values[i])]}', scalar_value=val, global_step=global_step)
 
-    figure = vxm.torch.utils.create_seg_figure(*seg_maps)
-    writer.add_figure(tag='seg_maps',
-                      figure=figure,
-                      global_step=global_step)
+    if len(seg_maps) > 0:
+        seg_maps = seg_maps[0]
+        figure = vxm.torch.utils.create_seg_figure(*seg_maps)
+        writer.add_figure(tag='seg_maps',
+                          figure=figure,
+                          global_step=global_step)
 
     if calc_statistics:
         log_statistics(torch.cat(list_hd_std), structures_dict.values(), writer=writer,
