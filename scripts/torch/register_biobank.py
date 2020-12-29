@@ -198,6 +198,7 @@ with torch.no_grad():
 # calculate statistics of performance over dice score and mean surface distance
 if args.use_probs and args.moving_seg:
     transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
+    resizer = vxm.layers.ResizeTransform(vel_resize=1/args.target_spacing, ndims=3)
     mask_values = list(structures_dict.keys())
     if args.use_toy:
         input_ = [toy.unsqueeze(dim=0).cuda(),
@@ -210,7 +211,7 @@ if args.use_probs and args.moving_seg:
         dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps, dvfs = \
             calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
                         y_true=y_true, num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
-                        affine=moving.image.affine)
+                        affine=moving.image.affine, resize_module=resizer)
 
     print('---------------------------------------')
     print('stats')
@@ -222,9 +223,16 @@ if args.use_probs and args.moving_seg:
 
     ddf_dir = os.path.join(args.output_dir, 'ddf/')
     os.makedirs(ddf_dir, exist_ok=True)
+    ddfs_fs = []
     for i, (ddf) in enumerate(dvfs):
         jacob = vxm.py.utils.jacobian_determinant(ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
         print(f'jacob negative count, {jacob[jacob < 0].size}, sample, {i}')
         print(f'jacob negative ratio, {jacob[jacob < 0].size / jacob.size}, sample, {i}')
         img = torchio.ScalarImage(tensor=ddf[0, ...].cpu(), affine=affine)
         img.save(os.path.join(ddf_dir, f'ddf{i}.mhd'))
+
+    dvfs = torch.cat(dvfs, dim=0)
+    dvfs = torch.norm(dvfs, p=2, dim=1)  # calculate the displacement field
+    dvf_std = torch.std(dvfs, dim=0).unsqueeze(dim=0)
+    img = torchio.ScalarImage(tensor=dvf_std.cpu(), affine=affine)
+    img.save(os.path.join(args.output_dir, f'ddf_norm_std.mhd'))
