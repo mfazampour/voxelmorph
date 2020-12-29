@@ -48,6 +48,7 @@ def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacin
         transforms.append(CropOrPad(target_shape=target_shape))
     return Compose(transforms)
 
+
 # def save_field_to_disk(field, file_path):
 #     field = field.cpu().numpy()
 #
@@ -85,13 +86,14 @@ parser.add_argument('--warp', help='output warp deformation filename')
 parser.add_argument('-g', '--gpu', help='GPU number(s) - if not supplied, CPU is used')
 parser.add_argument('--multichannel', action='store_true', help='specify that data has multiple channels')
 parser.add_argument('--inshape', type=int, nargs='+',
-                        help='after cropping shape of input. '
-                             'default is equal to image size. specify if the input can\'t path through UNet')
+                    help='after cropping shape of input. '
+                         'default is equal to image size. specify if the input can\'t path through UNet')
 parser.add_argument('--target-spacing', type=float, default=1, help='target spacing of the inputs to the network')
 parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
 parser.add_argument('--num-statistics-runs', type=int, default=50,
-                        help='number of runs to get each statistic')
+                    help='number of runs to get each statistic')
 parser.add_argument('--use-toy', action='store_true', help='create a toy example out of moving before registration')
+parser.add_argument("--output-dir", required=True, help="directory to dave the results")
 args = parser.parse_args()
 
 # device handling
@@ -102,6 +104,9 @@ else:
     device = 'cpu'
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
+# create output directory
+os.makedirs(args.output_dir, exist_ok=True)
+
 # load moving and fixed images
 moving = {'image': torchio.ScalarImage(args.moving)}
 fixed = {'image': torchio.ScalarImage(args.fixed)}
@@ -109,12 +114,15 @@ if args.moving_seg and args.fixed_seg:
     moving['label'] = torchio.LabelMap(args.moving_seg)
     fixed['label'] = torchio.LabelMap(args.fixed_seg)
 
+affine = moving['image'].affine
 moving = torchio.Subject(moving)
 fixed = torchio.Subject(fixed)
 
+# create transforms to/from network expected input
 trasform = biobank_transform(target_shape=args.inshape, target_spacing=args.target_spacing)
 full_size = biobank_transform(target_spacing=1.0, min_value=None)
 repad = biobank_transform(target_shape=moving.shape[-3:], min_value=None)
+full_size_vxm = vxm.layers.ResizeTransform(0.5, 3)
 
 moving = trasform(moving)
 fixed = trasform(fixed)
@@ -122,19 +130,17 @@ fixed = trasform(fixed)
 moving_fs = full_size(moving)
 fixed_fs = full_size(fixed)
 
-full_size_vxm = vxm.layers.ResizeTransform(0.5, 3)
-
 # load and set up model
 model = vxm.networks.VxmDense.load(args.model, device)
 model.to(device)
 model.eval()
 
 structures_dict = {0: 'backround',
-                10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
-                13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
-                18: 'left_amygdala', 26: 'left_accumbens', 49: 'right_thalamus',
-                50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
-                53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
+                   10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
+                   13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
+                   18: 'left_amygdala', 26: 'left_accumbens', 49: 'right_thalamus',
+                   50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
+                   53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
 
 # predict
 with torch.no_grad():
@@ -152,8 +158,9 @@ with torch.no_grad():
     if args.moved:
         img = torchio.ScalarImage(tensor=moved[0, ...].cpu())
         img = repad(img)
-        img.save(args.moved)
+        img.save(os.path.join(args.output_dir, args.moved))
 
+    # saved moved segmentation and calculate dice score
     if args.moving_seg:
         transformer = vxm.layers.SpatialTransformer(size=moving.shape[-3:], mode='nearest').to(device)
         morphed = transformer(moving.label.tensor.unsqueeze(dim=0).cuda(), warp)
@@ -186,23 +193,25 @@ with torch.no_grad():
     if args.warp:
         img = torchio.ScalarImage(tensor=warp[0, ...].cpu())
         img = repad(img)
-        img.save(args.warp)
+        img.save(os.path.join(args.output_dir, args.warp))
 
+# calculate statistics of performance over dice score and mean surface distance
 if args.use_probs and args.moving_seg:
     transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
+    resizer = vxm.layers.ResizeTransform(vel_resize=1/args.target_spacing, ndims=3)
     mask_values = list(structures_dict.keys())
     if args.use_toy:
         input_ = [toy.unsqueeze(dim=0).cuda(),
                   fixed.image.tensor.unsqueeze(dim=0).cuda(), moving.label.tensor.unsqueeze(dim=0).cuda()]
     else:
         input_ = [moving.image.tensor.unsqueeze(dim=0).cuda(),
-                    fixed.image.tensor.unsqueeze(dim=0).cuda(), moving.label.tensor.unsqueeze(dim=0).cuda()]
+                  fixed.image.tensor.unsqueeze(dim=0).cuda(), moving.label.tensor.unsqueeze(dim=0).cuda()]
     y_true = [fixed.label.tensor.unsqueeze(dim=0).cuda()]
     with torch.no_grad():
         dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps, dvfs = \
             calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
                         y_true=y_true, num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
-                        affine=moving.image.affine)
+                        affine=moving.image.affine, resize_module=resizer)
 
     print('---------------------------------------')
     print('stats')
@@ -212,17 +221,18 @@ if args.use_probs and args.moving_seg:
         print(f'Dice, {structures_dict[int(mask_values[i])]}, {d}, {d_std}')
         print(f'MSD, {structures_dict[int(mask_values[i])]}, {a}, {a_std}')
 
+    ddf_dir = os.path.join(args.output_dir, 'ddf/')
+    os.makedirs(ddf_dir, exist_ok=True)
+    ddfs_fs = []
     for i, (ddf) in enumerate(dvfs):
         jacob = vxm.py.utils.jacobian_determinant(ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
-        print(f'jacob/negative count, {jacob[jacob < 0].size}, sample, {i}')
-        print(f'jacob/negative ratio, {jacob[jacob < 0].size / jacob.size}, sample, {i}')
-        img = sitk.GetImageFromArray(ddf[0, ...].cpu().permute(1, 2, 3, 0))
-        sitk.WriteImage(img, f'/tmp/ddf{i}.mhd')
-        # save_field_to_disk(ddf[0, ...].cpu(), f'/tmp/ddf{i}.nii.gz')
-        # remove the flag for BinaryData from the mhd file :( :strange:
+        print(f'jacob negative count, {jacob[jacob < 0].size}, sample, {i}')
+        print(f'jacob negative ratio, {jacob[jacob < 0].size / jacob.size}, sample, {i}')
+        img = torchio.ScalarImage(tensor=ddf[0, ...].cpu(), affine=affine)
+        img.save(os.path.join(ddf_dir, f'ddf{i}.mhd'))
 
-
-
-
-
-
+    dvfs = torch.cat(dvfs, dim=0)
+    dvfs = torch.norm(dvfs, p=2, dim=1)  # calculate the displacement field
+    dvf_std = torch.std(dvfs, dim=0).unsqueeze(dim=0)
+    img = torchio.ScalarImage(tensor=dvf_std.cpu(), affine=affine)
+    img.save(os.path.join(args.output_dir, f'ddf_norm_std.mhd'))

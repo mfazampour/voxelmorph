@@ -35,13 +35,13 @@ def apply_model(model: torch.nn.Module, generator=None, inputs=None, y_true=None
     return loss, loss_list, inputs, y_true, y_pred
 
 
-def resize_label(img: torch.Tensor, affine):
+def resize_to_1mm(img: torch.Tensor, affine):
     T = Resample(1.0)
     img_im = torchio.LabelMap(tensor=img.cpu().squeeze(0), affine=affine)
     return T(img_im).data.to(img.device).unsqueeze(dim=0)
 
 def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.nn.Module,
-               inputs, y_true, affine=None):
+               inputs, y_true, affine=None, resize_module: torch.nn.Module = None):
     inputs, y_true, y_pred = apply_model(model, inputs=inputs,
                                          y_true=y_true, device=device,
                                          is_test=True, has_seg=True)
@@ -50,9 +50,11 @@ def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.n
     dvf = y_pred[-1].detach()
     seg_morphed = transformer(seg_moving, dvf)
     if affine is not None:
-        seg_morphed = resize_label(seg_morphed, affine)
-        seg_fixed = resize_label(seg_fixed, affine)
-        seg_moving = resize_label(seg_moving, affine)
+        seg_morphed = resize_to_1mm(seg_morphed, affine)
+        seg_fixed = resize_to_1mm(seg_fixed, affine)
+        seg_moving = resize_to_1mm(seg_moving, affine)
+    if resize_module is not None:
+        dvf = resize_module(dvf)
     seg_morphed = seg_morphed.round()
     shape = list(seg_fixed.shape)
     shape[1] = len(mask_values)
@@ -78,7 +80,7 @@ def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.n
 
 def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.nn.Module,
                 test_generator=None, inputs=None, y_true=None,
-                num_statistics_runs=10, calc_statistics=False, affine=None):
+                num_statistics_runs=10, calc_statistics=False, affine=None, resize_module: torch.nn.Module = None):
     reps = 1
     if calc_statistics:
         reps = num_statistics_runs
@@ -93,7 +95,8 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
             inputs, y_true = next(test_generator)
         for n in range(reps):
             asd_score, dice_score, hd_score, seg_map, dvf = get_scores(device, mask_values, model, transformer,
-                                                         inputs=inputs, y_true=y_true, affine=affine)
+                                                                       inputs=inputs, y_true=y_true,
+                                                                       affine=affine, resize_module=resize_module)
             seg_maps.append(seg_map)
             dvfs.append(dvf)
             dice_scores.append(dice_score)
