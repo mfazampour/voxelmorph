@@ -66,6 +66,7 @@ parser.add_argument('--fixed', required=True, help='fixed image (target) filenam
 parser.add_argument('--moved', required=True, help='warped image output filename')
 parser.add_argument('--model', required=True, help='pytorch model for nonlinear registration')
 parser.add_argument('--moving-seg', default=None, type=str, help='path to the moving image segmentation file')
+parser.add_argument('--moving-seg_brain', default=None, type=str, help='path to the moving image brain segmentation file')
 parser.add_argument('--fixed-seg', default=None, type=str, help='path to the fixed image segmentation file')
 parser.add_argument('--moved-seg', default=None, type=str, help='path to save the moved image segmentation file')
 parser.add_argument('--warp', help='output warp deformation filename')
@@ -99,6 +100,10 @@ fixed = {'image': torchio.ScalarImage(args.fixed)}
 if args.moving_seg and args.fixed_seg:
     moving['label'] = torchio.LabelMap(args.moving_seg)
     fixed['label'] = torchio.LabelMap(args.fixed_seg)
+
+if args.moving_seg_brain:
+    moving['mask'] = torchio.LabelMap(args.moving_seg_brain)
+    moving['mask'].data[moving['mask'].data > 0] = 1
 
 affine = moving['image'].affine
 moving = torchio.Subject(moving)
@@ -230,11 +235,15 @@ if args.use_probs and args.moving_seg:
 
     dvfs = torch.cat(dvfs, dim=0)
     dvfs_norm = torch.norm(dvfs, p=2, dim=1)  # calculate the displacement field
-    dvf_std = torch.std(dvfs_norm, dim=0, keepdim=True)
-    dvf_mean = torch.mean(dvfs, dim=0)
-    img = torchio.ScalarImage(tensor=dvf_std.cpu(), affine=affine)
+    dvf_std = torch.std(dvfs_norm, dim=0, keepdim=True).cpu()
+    dvf_mean = torch.mean(dvfs, dim=0).cpu()
+    if args.moving_seg_brain:
+        dvf_std = dvf_std * moving_fs['mask'].data
+        dvf_mean = dvf_mean * moving_fs['mask'].data.repeat((3, 1, 1, 1))
+
+    img = torchio.ScalarImage(tensor=dvf_std, affine=affine)
     img.save(os.path.join(args.output_dir, f'ddf_norm_std.mhd'))
-    img = torchio.ScalarImage(tensor=dvf_mean.cpu(), affine=affine)
+    img = torchio.ScalarImage(tensor=dvf_mean, affine=affine)
     img.save(os.path.join(args.output_dir, f'ddf_mean.mhd'))
 
 exit(0)
