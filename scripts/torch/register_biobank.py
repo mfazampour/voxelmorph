@@ -55,8 +55,9 @@ def save_score_csv(scores: torch.Tensor, output_dir, structures_dict, score_type
     with open(os.path.join(output_dir, f'{score_type}.csv'), 'wt') as f:
         for i, (key) in enumerate(structures_dict):
             scores_ = scores[:, i].cpu().numpy()
-            f.write(f'{structures_dict[key]}, {np.array2string(scores_, separator=", ", precision=4)}\n'
-                    .replace('[', '').replace(']', ''))
+            scores_str = np.array2string(scores_, separator=", ", precision=4).replace('[', '')\
+                .replace(']', '').replace('\n', '')
+            f.write(f'{structures_dict[key]}, {scores_str}\n')
 
 
 # parse commandline args
