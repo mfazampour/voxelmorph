@@ -66,7 +66,7 @@ parser.add_argument('--fixed', required=True, help='fixed image (target) filenam
 parser.add_argument('--moved', required=True, help='warped image output filename')
 parser.add_argument('--model', required=True, help='pytorch model for nonlinear registration')
 parser.add_argument('--moving-seg', default=None, type=str, help='path to the moving image segmentation file')
-parser.add_argument('--moving-seg_brain', default=None, type=str, help='path to the moving image brain segmentation file')
+parser.add_argument('--moving-seg-brain', default=None, type=str, help='path to the moving image brain segmentation file')
 parser.add_argument('--fixed-seg', default=None, type=str, help='path to the fixed image segmentation file')
 parser.add_argument('--moved-seg', default=None, type=str, help='path to save the moved image segmentation file')
 parser.add_argument('--warp', help='output warp deformation filename')
