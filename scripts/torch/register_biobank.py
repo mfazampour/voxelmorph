@@ -13,6 +13,8 @@ The source and target input images are expected to be affinely registered.
 
 import os
 import argparse
+from datetime import datetime
+
 import numpy as np
 import nibabel as nib
 import torch
@@ -49,28 +51,12 @@ def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacin
     return Compose(transforms)
 
 
-# def save_field_to_disk(field, file_path):
-#     field = field.cpu().numpy()
-#
-#     field_x = field[0]
-#     field_y = field[1]
-#     field_z = field[2]
-#
-#     dim = field.shape[1:]  # FIXME: why is the no. cells < no. points?
-#
-#     vectors = np.empty(field_x.shape + (3,), dtype=float)
-#     vectors[..., 0] = field_x
-#     vectors[..., 1] = field_y
-#     vectors[..., 2] = field_z
-#
-#     vectors = vectors.transpose(2, 1, 0, 3).copy()
-#     vectors.shape = vectors.size // 3, 3
-#
-#     im_vtk = tvtk.ImageData(spacing=(1, 1, 1), origin=(0, 0, 0), dimensions=dim)
-#     im_vtk.point_data.vectors = vectors
-#     im_vtk.point_data.vectors.name = 'field'
-#
-#     write_data(im_vtk, file_path)
+def save_score_csv(scores: torch.Tensor, output_dir, structures_dict, score_type: str):
+    with open(os.path.join(output_dir, f'{score_type}.csv'), 'wt') as f:
+        for i, (key) in enumerate(structures_dict):
+            scores_ = scores[:, i].cpu().numpy()
+            f.write(f'{structures_dict[key]}, {np.array2string(scores_, separator=", ", precision=4)}\n'
+                    .replace('[', '').replace(']', ''))
 
 
 # parse commandline args
@@ -144,6 +130,7 @@ structures_dict = {0: 'backround',
 
 # predict
 with torch.no_grad():
+    start = datetime.now()
     if args.use_toy:
         toy = create_toy_sample(moving.image.tensor, mask=moving.label.tensor, method='noise', num_changes=5)
         moved, warp = model(toy.unsqueeze(dim=0).cuda(),
@@ -153,6 +140,8 @@ with torch.no_grad():
         moved, warp = model(moving.image.tensor.unsqueeze(dim=0).cuda(),
                             fixed.image.tensor.unsqueeze(dim=0).cuda(),
                             registration=True)
+    span = datetime.now() - start
+    print(f'registration of two image pairs of size {args.inshape} took {span.microseconds} µs')
 
     # save moved image
     if args.moved:
@@ -208,10 +197,17 @@ if args.use_probs and args.moving_seg:
                   fixed.image.tensor.unsqueeze(dim=0).cuda(), moving.label.tensor.unsqueeze(dim=0).cuda()]
     y_true = [fixed.label.tensor.unsqueeze(dim=0).cuda()]
     with torch.no_grad():
-        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps, dvfs = \
+        dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs = \
             calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
                         y_true=y_true, num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
                         affine=moving.image.affine, resize_module=resizer)
+        dice_score = dice_scores.mean(dim=0, keepdim=True)
+        hd_score = hd_scores.mean(dim=0, keepdim=True)
+        asd_score = asd_scores.mean(dim=0, keepdim=True)
+
+    save_score_csv(dice_scores, args.output_dir, structures_dict, score_type='dice')
+    save_score_csv(hd_scores, args.output_dir, structures_dict, score_type='hd')
+    save_score_csv(asd_scores, args.output_dir, structures_dict, score_type='asd')
 
     print('---------------------------------------')
     print('stats')
@@ -231,8 +227,15 @@ if args.use_probs and args.moving_seg:
         img = torchio.ScalarImage(tensor=ddf[0, ...].cpu(), affine=affine)
         img.save(os.path.join(ddf_dir, f'ddf{i}.mhd'))
 
+
     dvfs = torch.cat(dvfs, dim=0)
-    dvfs = torch.norm(dvfs, p=2, dim=1)  # calculate the displacement field
-    dvf_std = torch.std(dvfs, dim=0).unsqueeze(dim=0)
+    dvfs_norm = torch.norm(dvfs, p=2, dim=1)  # calculate the displacement field
+    dvf_std = torch.std(dvfs_norm, dim=0, keepdim=True)
+    dvf_mean = torch.mean(dvfs, dim=0)
     img = torchio.ScalarImage(tensor=dvf_std.cpu(), affine=affine)
     img.save(os.path.join(args.output_dir, f'ddf_norm_std.mhd'))
+    img = torchio.ScalarImage(tensor=dvf_mean.cpu(), affine=affine)
+    img.save(os.path.join(args.output_dir, f'ddf_mean.mhd'))
+
+exit(0)
+

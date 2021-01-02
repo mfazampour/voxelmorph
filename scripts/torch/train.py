@@ -366,12 +366,15 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
     for step in range(args.num_test_imgs):
         print(step)
         # generate scores for logging on tensorboard
-        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps, _ = calc_scores(device, mask_values,
+        dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, _ = calc_scores(device, mask_values,
                                                                                               model,
                                                                                               transformer,
                                                                                               test_generator=test_generator,
                                                                                               num_statistics_runs=args.num_statistics_runs,
                                                                                               calc_statistics=calc_statistics)
+        dice_score = dice_scores.mean(dim=0, keepdim=True)
+        hd_score = hd_scores.mean(dim=0, keepdim=True)
+        asd_score = asd_scores.mean(dim=0, keepdim=True)
         list_dice.append(dice_score.cpu())
         list_hd.append(hd_score.cpu())
         list_asd.append(asd_score.cpu())
