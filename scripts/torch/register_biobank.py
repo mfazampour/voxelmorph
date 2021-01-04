@@ -38,7 +38,7 @@ from scripts.torch.utils import calc_scores
 from scripts.torch.utils import create_toy_sample
 
 
-def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None, resample_after=True):
+def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None, resample_after=False):
     if min_value is None:
         transforms = []
     else:
@@ -109,14 +109,14 @@ if args.moving_seg_brain:
     moving['mask'] = torchio.LabelMap(args.moving_seg_brain)
     moving['mask'].data[moving['mask'].data > 0] = 1
 
-affine = moving['image'].affine
+# affine = moving['image'].affine
 moving = torchio.Subject(moving)
 fixed = torchio.Subject(fixed)
 
 # create transforms to/from network expected input
 trasform = biobank_transform(target_shape=args.inshape, target_spacing=args.target_spacing)
 full_size = biobank_transform(target_spacing=1.0, min_value=None)
-repad = biobank_transform(target_shape=moving.shape[-3:], min_value=None,
+repad = biobank_transform(target_shape=[max(moving.shape[-3:])] * 3, min_value=None,
                           target_spacing=args.final_spacing, resample_after=True)
 full_size_vxm = vxm.layers.ResizeTransform(0.5, 3)
 
@@ -155,7 +155,8 @@ with torch.no_grad():
 
     # save moved image
     if args.moved:
-        img = torchio.ScalarImage(tensor=moved[0, ...].cpu())
+        img = torchio.ScalarImage(tensor=moved[0, ...].cpu(), affine=moving['image'].affine)
+        img = full_size(img)
         img = repad(img)
         img.save(os.path.join(args.output_dir, args.moved))
 
@@ -190,7 +191,8 @@ with torch.no_grad():
 
     # save warp
     if args.warp:
-        img = torchio.ScalarImage(tensor=warp[0, ...].cpu())
+        img = torchio.ScalarImage(tensor=warp[0, ...].cpu(), affine=moving['image'].affine)
+        img = full_size(img)
         img = repad(img)
         img.save(os.path.join(args.output_dir, args.warp))
 
@@ -234,7 +236,7 @@ if args.use_probs and args.moving_seg:
         jacob = vxm.py.utils.jacobian_determinant(ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
         print(f'jacob negative count, {jacob[jacob < 0].size}, sample, {i}')
         print(f'jacob negative ratio, {jacob[jacob < 0].size / jacob.size}, sample, {i}')
-        img = torchio.ScalarImage(tensor=ddf[0, ...].cpu(), affine=affine)
+        img = torchio.ScalarImage(tensor=ddf[0, ...].cpu(), affine=moving_fs['image'].affine)
         img.save(os.path.join(ddf_dir, f'ddf{i}.mhd'))
 
 
@@ -246,10 +248,10 @@ if args.use_probs and args.moving_seg:
         dvf_std = dvf_std * moving_fs['mask'].data
         dvf_mean = dvf_mean * moving_fs['mask'].data.repeat((3, 1, 1, 1))
 
-    img = torchio.ScalarImage(tensor=dvf_std, affine=affine)
+    img = torchio.ScalarImage(tensor=dvf_std, affine=moving_fs['image'].affine)
     img = repad(img)
     img.save(os.path.join(args.output_dir, f'ddf_norm_std.mhd'))
-    img = torchio.ScalarImage(tensor=dvf_mean, affine=affine)
+    img = torchio.ScalarImage(tensor=dvf_mean, affine=moving_fs['image'].affine)
     img = repad(img)
     img.save(os.path.join(args.output_dir, f'ddf_mean.mhd'))
 
