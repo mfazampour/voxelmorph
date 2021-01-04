@@ -38,16 +38,18 @@ from scripts.torch.utils import calc_scores
 from scripts.torch.utils import create_toy_sample
 
 
-def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None):
+def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None, resample_after=False):
     if min_value is None:
         transforms = []
     else:
         rescale = RescaleIntensity((min_value, max_value))
         transforms = [rescale]
-    if target_spacing is not None:
+    if target_spacing is not None and not resample_after:
         transforms.append(Resample(target_spacing))
     if target_shape is not None:
         transforms.append(CropOrPad(target_shape=target_shape))
+    if target_spacing is not None and resample_after:
+        transforms.append(Resample(target_spacing))
     return Compose(transforms)
 
 
@@ -77,6 +79,7 @@ parser.add_argument('--inshape', type=int, nargs='+',
                     help='after cropping shape of input. '
                          'default is equal to image size. specify if the input can\'t path through UNet')
 parser.add_argument('--target-spacing', type=float, default=1, help='target spacing of the inputs to the network')
+parser.add_argument('--final-spacing', type=float, default=2.43, help='final spacing of the saved images')
 parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
 parser.add_argument('--num-statistics-runs', type=int, default=50,
                     help='number of runs to get each statistic')
@@ -113,7 +116,8 @@ fixed = torchio.Subject(fixed)
 # create transforms to/from network expected input
 trasform = biobank_transform(target_shape=args.inshape, target_spacing=args.target_spacing)
 full_size = biobank_transform(target_spacing=1.0, min_value=None)
-repad = biobank_transform(target_shape=moving.shape[-3:], min_value=None)
+repad = biobank_transform(target_shape=moving.shape[-3:], min_value=None,
+                          target_spacing=args.final_spacing, resample_after=True)
 full_size_vxm = vxm.layers.ResizeTransform(0.5, 3)
 
 moving = trasform(moving)
@@ -243,8 +247,10 @@ if args.use_probs and args.moving_seg:
         dvf_mean = dvf_mean * moving_fs['mask'].data.repeat((3, 1, 1, 1))
 
     img = torchio.ScalarImage(tensor=dvf_std, affine=affine)
+    img = repad(img)
     img.save(os.path.join(args.output_dir, f'ddf_norm_std.mhd'))
     img = torchio.ScalarImage(tensor=dvf_mean, affine=affine)
+    img = repad(img)
     img.save(os.path.join(args.output_dir, f'ddf_mean.mhd'))
 
 exit(0)
