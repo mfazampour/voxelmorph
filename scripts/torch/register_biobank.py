@@ -38,7 +38,7 @@ from scripts.torch.utils import calc_scores
 from scripts.torch.utils import create_toy_sample
 
 
-def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None, resample_after=False):
+def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None, resample_after=True):
     if min_value is None:
         transforms = []
     else:
