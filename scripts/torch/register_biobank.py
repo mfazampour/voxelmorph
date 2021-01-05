@@ -85,6 +85,7 @@ parser.add_argument('--num-statistics-runs', type=int, default=50,
                     help='number of runs to get each statistic')
 parser.add_argument('--use-toy', action='store_true', help='create a toy example out of moving before registration')
 parser.add_argument("--output-dir", required=True, help="directory to dave the results")
+parser.add_argument("--sampling-speed", action='store_true', help='measure the sampling through 10k runs')
 args = parser.parse_args()
 
 # device handling
@@ -149,11 +150,17 @@ with torch.no_grad():
                             fixed.image.tensor.unsqueeze(dim=0).cuda(),
                             registration=True)
     else:
-        moved, warp = model(moving.image.tensor.unsqueeze(dim=0).cuda(),
-                            fixed.image.tensor.unsqueeze(dim=0).cuda(),
-                            registration=True)
+        N = 100 if args.sampling_speed else 1
+        m = moving.image.tensor.unsqueeze(dim=0).cuda()
+        f = fixed.image.tensor.unsqueeze(dim=0).cuda()
+        for i in range(N):
+            moved, warp = model(m, f, registration=True, measure_sampling_speed=args.sampling_speed)
     span = datetime.now() - start
-    print(f'registration of two image pairs of size {args.inshape} took {span.microseconds} µs')
+    if args.sampling_speed:
+        print(f'sampling 10k samples from the posterior took {span.microseconds} µs')
+        exit(0)
+    else:
+        print(f'registration of two image pairs of size {args.inshape} took {span.microseconds} µs')
 
     # save moved image
     if args.moved:

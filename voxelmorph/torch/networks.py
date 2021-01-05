@@ -178,9 +178,10 @@ class VxmDense(LoadableModel):
         # configure transformer
         self.transformer = layers.SpatialTransformer(inshape)
 
-    def forward(self, source, target, registration=False):
+    def forward(self, source, target, registration=False, measure_sampling_speed=False):
         '''
         Parameters:
+            measure_sampling_speed: flag to calculate the efficiency of sampling from the posterior
             source: Source image tensor.
             target: Target image tensor.
             registration: Return transformed image and flow. Default is False.
@@ -202,6 +203,10 @@ class VxmDense(LoadableModel):
 
         # resize flow for integration
         pos_flow = flow_field
+
+        if measure_sampling_speed:
+            return source, pos_flow
+
         if self.resize:
             pos_flow = self.resize(pos_flow)
 
