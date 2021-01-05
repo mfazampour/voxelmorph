@@ -157,10 +157,10 @@ with torch.no_grad():
             moved, warp = model(m, f, registration=True, measure_sampling_speed=args.sampling_speed)
     span = datetime.now() - start
     if args.sampling_speed:
-        print(f'sampling 10k samples from the posterior took {span.microseconds} µs')
+        print(f'sampling 10k samples from the posterior took {span.seconds} s and {span.microseconds} µs')
         exit(0)
     else:
-        print(f'registration of two image pairs of size {args.inshape} took {span.microseconds} µs')
+        print(f'registration of two image pairs of size {args.inshape} took {span.seconds} s and {span.microseconds} µs')
 
     # save moved image
     if args.moved:
