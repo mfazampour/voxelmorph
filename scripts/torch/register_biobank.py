@@ -150,7 +150,7 @@ with torch.no_grad():
                             fixed.image.tensor.unsqueeze(dim=0).cuda(),
                             registration=True)
     else:
-        N = 100 if args.sampling_speed else 1
+        N = 10000 if args.sampling_speed else 1
         m = moving.image.tensor.unsqueeze(dim=0).cuda()
         f = fixed.image.tensor.unsqueeze(dim=0).cuda()
         for i in range(N):
