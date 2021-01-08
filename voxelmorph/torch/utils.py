@@ -28,7 +28,7 @@ def fmt(x, pos):
 def fill_subplots(img: torch.Tensor, axs, img_name='', fontsize=6, cmap='gray',
                   fig: plt.Figure=None, show_colorbar=False, normalize=True):
     if cmap == 'gray' and normalize:  # map image to 0...1
-        img = (img + img.min())/(img.max() - img.min())
+        img = (img - img.min())/(img.max() - img.min())
     elif cmap is None:  # cliping data to 0...255
         img[img < 0] = 0
         img[img > 255] = 255
