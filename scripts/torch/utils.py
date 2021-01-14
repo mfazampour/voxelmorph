@@ -3,13 +3,19 @@ import torch
 from monai.metrics import compute_meandice
 from monai.metrics import compute_hausdorff_distance
 from monai.metrics import compute_average_surface_distance
-
 import torchio
 from torchio.transforms import Resample
 
-def apply_model(model: torch.nn.Module, generator=None, inputs=None, y_true=None, device='cpu', losses=None, weights=None, is_test=False, has_seg=False):
+import matplotlib.pyplot as plt
+
+from pylab import plot, show, savefig, xlim, figure, ylim, legend, boxplot, setp, axes
+
+
+def apply_model(model: torch.nn.Module, generator=None, inputs=None, y_true=None, device='cpu', losses=None,
+                weights=None, is_test=False, has_seg=False):
     # generate inputs (and true outputs) and convert them to tensors
-    assert generator is not None or (inputs is not None and y_true is not None), 'Either generator or input/y_true needed'
+    assert generator is not None or (
+            inputs is not None and y_true is not None), 'Either generator or input/y_true needed'
     if generator is not None:
         inputs, y_true = next(generator)
     if not isinstance(inputs[0], torch.Tensor):
@@ -39,6 +45,7 @@ def resize_to_1mm(img: torch.Tensor, affine):
     T = Resample(1.0)
     img_im = torchio.LabelMap(tensor=img.cpu().squeeze(0), affine=affine)
     return T(img_im).data.to(img.device).unsqueeze(dim=0)
+
 
 def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.nn.Module,
                inputs, y_true, affine=None, resize_module: torch.nn.Module = None):
@@ -132,5 +139,101 @@ def create_toy_sample(img: torch.Tensor, mask: torch.Tensor, method: str = 'nois
             NotImplementedError()
     return toy
 
+
 def swap_indices(img: torch.Tensor, indices):
     return img
+
+
+# function for setting the colors of the box plots pairs
+def setBoxColors(bp):
+    setp(bp['boxes'][0], color='blue')
+    setp(bp['caps'][0], color='blue')
+    setp(bp['caps'][1], color='blue')
+    setp(bp['whiskers'][0], color='blue')
+    setp(bp['whiskers'][1], color='blue')
+    setp(bp['medians'][0], color='blue')
+
+    setp(bp['boxes'][1], color='red')
+    setp(bp['caps'][2], color='red')
+    setp(bp['caps'][3], color='red')
+    setp(bp['whiskers'][2], color='red')
+    setp(bp['whiskers'][3], color='red')
+    setp(bp['medians'][1], color='red')
+
+
+def boxplot_scores(data_list, tags, legends, pre):
+    fig = figure(figsize=(10.8, 6.4))
+    ax = axes()
+
+    pos = 0
+    ticks_pos = []
+    n = len(data_list) + 1
+    total_ticks = len(tags) * n
+    ax.axvline(x=pos, ls='-.', color='k', lw='0.5')
+    for i, tag in enumerate(tags):
+        # first boxplot pair
+        data = []
+        for d in data_list:
+            data.append(d[:, i])
+        bp = boxplot(data, positions=[pos + 1, pos + 2, pos + 3], widths=0.6, showfliers=False)
+        setBoxColors(bp)
+        ticks_pos.append(pos + 2)
+        # if i != len(tags) - 1:
+        ax.axvline(x=pos+n, ls='-.', color='k', lw='0.5')
+        pos += n
+    # draw temporary red and blue lines and use them to create a legend
+    hB, = plot([1, 1], 'b-')
+    hR, = plot([1, 1], 'r-')
+    legend((hB, hR), legends, loc='lower right')
+    hB.set_visible(False)
+    hR.set_visible(False)
+
+
+    ax.set_xticklabels(tags)
+    ax.set_xticks(ticks_pos)
+    for tick in ax.get_xticklabels():
+        tick.set_rotation(90)
+
+    pos = 0
+    x0, x1 = ax.get_xbound()
+    w = x1 - x0
+    margin = -0.4
+    for i, tag in enumerate(tags):
+        ax.axhline(y=pre[tags[i]], ls='--', color='c',
+                   xmin=(pos + margin - x0) / w, xmax=(pos - margin + n - x0) / w)
+        pos += n
+
+    savefig('boxcompare.png')
+    show()
+
+
+if __name__ == "__main__":
+    # read csv file
+    import csv
+
+    with open('../../results/SGMCMC_DSC.csv', newline='') as csvfile:
+        info = csv.reader(csvfile, delimiter=',', quotechar='|')
+        tags = info.__next__()
+        data1 = []
+        for i, row in enumerate(info):
+            data1.append(np.asarray(row).astype(np.float))
+        data1 = np.asarray(data1)
+    with open('../../results/VI_DSC.csv', newline='') as csvfile:
+        info = csv.reader(csvfile, delimiter=',', quotechar='|')
+        tags = info.__next__()
+        data2 = []
+        for i, row in enumerate(info):
+            data2.append(np.asarray(row).astype(np.float))
+        data2 = np.asarray(data2)
+
+    dsc_pre_registration = {'brain stem': 0.815,
+                            'left accumbens': 0.593, 'right accumbens': 0.653,
+                            'left amygdala': 0.335, 'right amygdala': 0.644,
+                            'left caudate': 0.705, 'right caudate': 0.813,
+                            'left hippocampus': 0.708, 'right hippocampus': 0.665,
+                            'left pallidum': 0.673, 'right pallidum': 0.794,
+                            'left putamen': 0.772, 'right putamen': 0.812,
+                            'left thalamus': 0.896, 'right thalamus': 0.920}
+
+    # plot the box plot using the data list and the tags
+    boxplot_scores([data1, data2, data1], tags, legends=('SGMCMC', 'VI', 'VoxelMorph'),  pre=dsc_pre_registration)
