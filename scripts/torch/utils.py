@@ -110,16 +110,16 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
             hd_scores.append(hd_score)
             asd_scores.append(asd_score)
         # calculate mean and return if no calc_statistics
-        dice_score = torch.cat(dice_scores).mean(dim=0, keepdim=True)
-        hd_score = torch.cat(hd_scores).mean(dim=0, keepdim=True)
-        asd_score = torch.cat(asd_scores).mean(dim=0, keepdim=True)
+        dice_scores = torch.cat(dice_scores)
+        hd_scores = torch.cat(hd_scores)
+        asd_scores = torch.cat(asd_scores)
         if calc_statistics:
-            dice_std = torch.cat(dice_scores).std(dim=0, keepdim=True)
-            hd_std = torch.cat(hd_scores).std(dim=0, keepdim=True)
-            asd_std = torch.cat(asd_scores).std(dim=0, keepdim=True)
+            dice_std = dice_scores.std(dim=0, keepdim=True)
+            hd_std = hd_scores.std(dim=0, keepdim=True)
+            asd_std = asd_scores.std(dim=0, keepdim=True)
         else:
             dice_std, hd_std, asd_std = (torch.tensor([0.0]), torch.tensor([0.0]), torch.tensor([0.0]))
-        return dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps, dvfs
+        return dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs
 
 
 def create_toy_sample(img: torch.Tensor, mask: torch.Tensor, method: str = 'noise', num_changes=1, fill=0, sigma=1):

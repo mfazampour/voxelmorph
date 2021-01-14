@@ -22,5 +22,6 @@ setuptools.setup(
         'scipy',
         'nibabel',
         'neurite',
+        'torchio>=0.18'
     ]
 )

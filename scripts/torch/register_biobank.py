@@ -13,6 +13,8 @@ The source and target input images are expected to be affinely registered.
 
 import os
 import argparse
+from datetime import datetime
+
 import numpy as np
 import nibabel as nib
 import torch
@@ -36,41 +38,28 @@ from scripts.torch.utils import calc_scores
 from scripts.torch.utils import create_toy_sample
 
 
-def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None):
+def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None, resample_after=False):
     if min_value is None:
         transforms = []
     else:
         rescale = RescaleIntensity((min_value, max_value))
         transforms = [rescale]
-    if target_spacing is not None:
+    if target_spacing is not None and not resample_after:
         transforms.append(Resample(target_spacing))
     if target_shape is not None:
         transforms.append(CropOrPad(target_shape=target_shape))
+    if target_spacing is not None and resample_after:
+        transforms.append(Resample(target_spacing))
     return Compose(transforms)
 
 
-# def save_field_to_disk(field, file_path):
-#     field = field.cpu().numpy()
-#
-#     field_x = field[0]
-#     field_y = field[1]
-#     field_z = field[2]
-#
-#     dim = field.shape[1:]  # FIXME: why is the no. cells < no. points?
-#
-#     vectors = np.empty(field_x.shape + (3,), dtype=float)
-#     vectors[..., 0] = field_x
-#     vectors[..., 1] = field_y
-#     vectors[..., 2] = field_z
-#
-#     vectors = vectors.transpose(2, 1, 0, 3).copy()
-#     vectors.shape = vectors.size // 3, 3
-#
-#     im_vtk = tvtk.ImageData(spacing=(1, 1, 1), origin=(0, 0, 0), dimensions=dim)
-#     im_vtk.point_data.vectors = vectors
-#     im_vtk.point_data.vectors.name = 'field'
-#
-#     write_data(im_vtk, file_path)
+def save_score_csv(scores: torch.Tensor, output_dir, structures_dict, score_type: str):
+    with open(os.path.join(output_dir, f'{score_type}.csv'), 'wt') as f:
+        for i, (key) in enumerate(structures_dict):
+            scores_ = scores[:, i].cpu().numpy()
+            scores_str = np.array2string(scores_, separator=", ", precision=4).replace('[', '')\
+                .replace(']', '').replace('\n', '')
+            f.write(f'{structures_dict[key]}, {scores_str}\n')
 
 
 # parse commandline args
@@ -80,6 +69,7 @@ parser.add_argument('--fixed', required=True, help='fixed image (target) filenam
 parser.add_argument('--moved', required=True, help='warped image output filename')
 parser.add_argument('--model', required=True, help='pytorch model for nonlinear registration')
 parser.add_argument('--moving-seg', default=None, type=str, help='path to the moving image segmentation file')
+parser.add_argument('--moving-seg-brain', default=None, type=str, help='path to the moving image brain segmentation file')
 parser.add_argument('--fixed-seg', default=None, type=str, help='path to the fixed image segmentation file')
 parser.add_argument('--moved-seg', default=None, type=str, help='path to save the moved image segmentation file')
 parser.add_argument('--warp', help='output warp deformation filename')
@@ -89,11 +79,13 @@ parser.add_argument('--inshape', type=int, nargs='+',
                     help='after cropping shape of input. '
                          'default is equal to image size. specify if the input can\'t path through UNet')
 parser.add_argument('--target-spacing', type=float, default=1, help='target spacing of the inputs to the network')
+parser.add_argument('--final-spacing', type=float, default=2.43, help='final spacing of the saved images')
 parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
 parser.add_argument('--num-statistics-runs', type=int, default=50,
                     help='number of runs to get each statistic')
 parser.add_argument('--use-toy', action='store_true', help='create a toy example out of moving before registration')
 parser.add_argument("--output-dir", required=True, help="directory to dave the results")
+parser.add_argument("--sampling-speed", action='store_true', help='measure the sampling through 10k runs')
 args = parser.parse_args()
 
 # device handling
@@ -114,15 +106,22 @@ if args.moving_seg and args.fixed_seg:
     moving['label'] = torchio.LabelMap(args.moving_seg)
     fixed['label'] = torchio.LabelMap(args.fixed_seg)
 
-affine = moving['image'].affine
+if args.moving_seg_brain:
+    moving['mask'] = torchio.LabelMap(args.moving_seg_brain)
+    moving['mask'].data[moving['mask'].data > 0] = 1
+
+# affine = moving['image'].affine
 moving = torchio.Subject(moving)
 fixed = torchio.Subject(fixed)
 
 # create transforms to/from network expected input
 trasform = biobank_transform(target_shape=args.inshape, target_spacing=args.target_spacing)
 full_size = biobank_transform(target_spacing=1.0, min_value=None)
-repad = biobank_transform(target_shape=moving.shape[-3:], min_value=None)
-full_size_vxm = vxm.layers.ResizeTransform(0.5, 3)
+repad_resample = biobank_transform(target_shape=[max(moving.shape[-3:])] * 3, min_value=None,
+                                   target_spacing=args.final_spacing, resample_after=True)
+repad = biobank_transform(target_shape=[max(moving.shape[-3:])] * 3, min_value=None)
+full_size_vxm = vxm.layers.ResizeTransform(1/args.target_spacing, 3)
+final_size_vxm = vxm.layers.ResizeTransform(args.final_spacing, 3)
 
 moving = trasform(moving)
 fixed = trasform(fixed)
@@ -144,20 +143,30 @@ structures_dict = {0: 'backround',
 
 # predict
 with torch.no_grad():
+    start = datetime.now()
     if args.use_toy:
         toy = create_toy_sample(moving.image.tensor, mask=moving.label.tensor, method='noise', num_changes=5)
         moved, warp = model(toy.unsqueeze(dim=0).cuda(),
                             fixed.image.tensor.unsqueeze(dim=0).cuda(),
                             registration=True)
     else:
-        moved, warp = model(moving.image.tensor.unsqueeze(dim=0).cuda(),
-                            fixed.image.tensor.unsqueeze(dim=0).cuda(),
-                            registration=True)
+        N = 10000 if args.sampling_speed else 1
+        m = moving.image.tensor.unsqueeze(dim=0).cuda()
+        f = fixed.image.tensor.unsqueeze(dim=0).cuda()
+        for i in range(N):
+            moved, warp = model(m, f, registration=True, measure_sampling_speed=args.sampling_speed)
+    span = datetime.now() - start
+    if args.sampling_speed:
+        print(f'sampling 10k samples from the posterior took {span.seconds} s and {span.microseconds} µs')
+        exit(0)
+    else:
+        print(f'registration of two image pairs of size {args.inshape} took {span.seconds} s and {span.microseconds} µs')
 
     # save moved image
     if args.moved:
-        img = torchio.ScalarImage(tensor=moved[0, ...].cpu())
-        img = repad(img)
+        img = torchio.ScalarImage(tensor=moved[0, ...].cpu(), affine=moving['image'].affine)
+        img = full_size(img)
+        img = repad_resample(img)
         img.save(os.path.join(args.output_dir, args.moved))
 
     # saved moved segmentation and calculate dice score
@@ -191,8 +200,9 @@ with torch.no_grad():
 
     # save warp
     if args.warp:
-        img = torchio.ScalarImage(tensor=warp[0, ...].cpu())
-        img = repad(img)
+        img = torchio.ScalarImage(tensor=warp[0, ...].cpu(), affine=moving['image'].affine)
+        img = full_size(img)
+        img = repad_resample(img)
         img.save(os.path.join(args.output_dir, args.warp))
 
 # calculate statistics of performance over dice score and mean surface distance
@@ -208,10 +218,17 @@ if args.use_probs and args.moving_seg:
                   fixed.image.tensor.unsqueeze(dim=0).cuda(), moving.label.tensor.unsqueeze(dim=0).cuda()]
     y_true = [fixed.label.tensor.unsqueeze(dim=0).cuda()]
     with torch.no_grad():
-        dice_score, hd_score, asd_score, dice_std, hd_std, asd_std, seg_maps, dvfs = \
+        dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs = \
             calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
                         y_true=y_true, num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
                         affine=moving.image.affine, resize_module=resizer)
+        dice_score = dice_scores.mean(dim=0, keepdim=True)
+        hd_score = hd_scores.mean(dim=0, keepdim=True)
+        asd_score = asd_scores.mean(dim=0, keepdim=True)
+
+    save_score_csv(dice_scores, args.output_dir, structures_dict, score_type='dice')
+    save_score_csv(hd_scores, args.output_dir, structures_dict, score_type='hd')
+    save_score_csv(asd_scores, args.output_dir, structures_dict, score_type='asd')
 
     print('---------------------------------------')
     print('stats')
@@ -223,16 +240,27 @@ if args.use_probs and args.moving_seg:
 
     ddf_dir = os.path.join(args.output_dir, 'ddf/')
     os.makedirs(ddf_dir, exist_ok=True)
-    ddfs_fs = []
     for i, (ddf) in enumerate(dvfs):
         jacob = vxm.py.utils.jacobian_determinant(ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
         print(f'jacob negative count, {jacob[jacob < 0].size}, sample, {i}')
         print(f'jacob negative ratio, {jacob[jacob < 0].size / jacob.size}, sample, {i}')
-        img = torchio.ScalarImage(tensor=ddf[0, ...].cpu(), affine=affine)
+        img = torchio.ScalarImage(tensor=ddf[0, ...].cpu(), affine=moving_fs['image'].affine)
         img.save(os.path.join(ddf_dir, f'ddf{i}.mhd'))
 
-    dvfs = torch.cat(dvfs, dim=0)
-    dvfs = torch.norm(dvfs, p=2, dim=1)  # calculate the displacement field
-    dvf_std = torch.std(dvfs, dim=0).unsqueeze(dim=0)
-    img = torchio.ScalarImage(tensor=dvf_std.cpu(), affine=affine)
+    ddf_affine = repad_resample(torchio.ScalarImage(tensor=ddf.squeeze(dim=0).cpu(), affine=moving_fs['image'].affine)).affine
+    dvfs = [repad_resample(torchio.ScalarImage(tensor=ddf.squeeze(dim=0).cpu(), affine=moving_fs['image'].affine)).data/args.final_spacing for ddf in dvfs]
+    dvfs = torch.stack(dvfs, dim=0)
+    dvfs_norm = torch.norm(dvfs, p=2, dim=1)  # calculate the displacement field
+    dvf_std = torch.std(dvfs_norm, dim=0, keepdim=True).cpu()
+    dvf_mean = torch.mean(dvfs, dim=0).cpu()
+    if args.moving_seg_brain:
+        dvf_std = dvf_std * repad_resample(moving_fs)['mask'].data
+        dvf_mean = dvf_mean * repad_resample(moving_fs)['mask'].data.repeat((3, 1, 1, 1))
+
+    img = torchio.ScalarImage(tensor=dvf_std, affine=ddf_affine)
     img.save(os.path.join(args.output_dir, f'ddf_norm_std.mhd'))
+    img = torchio.ScalarImage(tensor=dvf_mean, affine=ddf_affine)
+    img.save(os.path.join(args.output_dir, f'ddf_mean.mhd'))
+
+exit(0)
+
