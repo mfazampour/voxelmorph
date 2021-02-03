@@ -1,12 +1,13 @@
-import torch
-import torch.nn.functional as F
-import numpy as np
 import math
-
-from torch import nn
-from torch.autograd import Variable
 from math import exp
 
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torch.autograd import Variable
+
+from .learnsim.model.model import CNN_SSD
 
 class NCC:
     """
@@ -372,3 +373,36 @@ class KL:
             # combine terms
             loss += 0.5 * ndims * (sigma_term + prec_term)  # ndims because we averaged over dimensions as well
         return loss/y_pred.shape[0]
+
+
+class LearnedSim:
+    def __init__(self, config_path: str, checkpoint_path: str, device='cuda', reduction='mean'):
+        # config = read_json(config_path)
+        # ConfigParser(config=config, resume=Path(checkpoint_path))
+        config = torch.load(checkpoint_path)['config']
+        model = torch.load(checkpoint_path)['model']
+        s = config.config['model']['args']['s']
+        no_feature_maps = config.config['model']['args']['no_feature_maps']
+        self.model = CNN_SSD(s, no_feature_maps)
+        self.model.load_state_dict(model)
+        self.model.to(device)
+        self.set_requires_grad(False)
+
+        self.reduction = reduction
+
+    def set_requires_grad(self, requires_grad=False):
+        """Set requies_grad=Fasle for all the networks to avoid unnecessary computations
+        Parameters:
+            requires_grad (bool)  -- whether the networks require gradients or not
+        """
+        for param in self.model.parameters():
+            param.requires_grad = requires_grad
+
+    def loss(self, y_true: torch.Tensor, y_pred: torch.Tensor):
+        t = self.model.forward(y_true, y_pred, mask=y_pred > 0)
+        if self.reduction == 'sum':
+            return t.sum()
+        elif self.reduction == 'mean':
+            return t.mean()
+        else:
+            NotImplementedError()

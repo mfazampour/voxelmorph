@@ -17,6 +17,7 @@ import argparse
 import glob
 import time
 from datetime import datetime
+import pathlib
 
 import numpy as np
 import torch
@@ -25,6 +26,11 @@ from GPUtil import GPUtil
 from torch.utils.tensorboard import SummaryWriter
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
+
+import sys
+sys.path.append(str(pathlib.Path(__file__).parent.parent.parent.absolute()))  # add vxm path
+sys.path.append(str(pathlib.Path(__file__).parent.parent.parent.absolute()
+                    / 'voxelmorph' / 'torch' / 'learnsim'))  # add learnsim path
 
 # import voxelmorph with pytorch backend
 os.environ['VXM_BACKEND'] = 'pytorch'
@@ -70,7 +76,7 @@ def main():
 
     model = create_model(args, bidir, device, inshape, nb_gpus)
 
-    losses, optimizer, weights, loss_names = create_optimizers(args, bidir, model)
+    losses, optimizer, weights, loss_names = create_optimizers(args, bidir, model, device)
     # training loops
     train(args, device, generator, losses, model, model_dir, optimizer, weights, writer, loss_names, test_generator)
 
@@ -78,11 +84,13 @@ def main():
 def parse_args() -> argparse.ArgumentParser:
     # parse the commandline
     parser = argparse.ArgumentParser()
+
     # data organization parameters
     parser.add_argument('datadir', help='base data directory')
     parser.add_argument('--atlas', help='atlas filename (default: data/atlas_norm.npz)')
     parser.add_argument('--model-dir', default='models', help='model output directory (default: models)')
     parser.add_argument('--multichannel', action='store_true', help='specify that data has multiple channels')
+
     # training parameters
     parser.add_argument('--gpu', default='0', help='GPU ID number(s), comma-separated (default: 0)')
     parser.add_argument('--batch-size', type=int, default=1, help='batch size (default: 1)')
@@ -91,45 +99,36 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument('--load-model', help='optional model file to initialize with')
     parser.add_argument('--initial-epoch', type=int, default=0, help='initial epoch number (default: 0)')
     parser.add_argument('--lr', type=float, default=1e-4, help='learning rate (default: 1e-4)')
-    parser.add_argument('--cudnn-nondet', action='store_true',
-                        help='disable cudnn determinism - might slow down training')
+    parser.add_argument('--cudnn-nondet', action='store_true', help='disable cudnn determinism - might slow down training')
+
     # network architecture parameters
     parser.add_argument('--enc', type=int, nargs='+', help='list of unet encoder filters (default: 16 32 32 32)')
-    parser.add_argument('--dec', type=int, nargs='+',
-                        help='list of unet decorder filters (default: 32 32 32 32 32 16 16)')
+    parser.add_argument('--dec', type=int, nargs='+', help='list of unet decorder filters (default: 32 32 32 32 32 16 16)')
     parser.add_argument('--int-steps', type=int, default=7, help='number of integration steps (default: 7)')
-    parser.add_argument('--int-downsize', type=int, default=2,
-                        help='flow downsample factor for integration (default: 2)')
+    parser.add_argument('--int-downsize', type=int, default=2, help='flow downsample factor for integration (default: 2)')
     parser.add_argument('--bidir', action='store_true', help='enable bidirectional cost function')
-    parser.add_argument('--inshape', type=int, nargs='+',
-                        help='after cropping shape of input. '
-                             'default is equal to image size. specify if the input can\'t path through UNet')
+    parser.add_argument('--inshape', type=int, nargs='+', help='after cropping shape of input. default is equal to image size. specify if the input can\'t path through UNet')
     parser.add_argument('--target-spacing', type=float, default=1, help='target spacing of the inputs to the network')
+
     # loss hyperparameters
-    parser.add_argument('--image-loss', default='mse',
-                        help='image reconstruction loss - can be mse or ncc (default: mse)')
+    parser.add_argument('--image-loss', default='mse', help='image reconstruction loss - can be mse or ncc (default: mse)')
     parser.add_argument('--image-sigma', default=1.0, type=float, help='sigma for the mse loss')
-    parser.add_argument('--lambda', type=float, dest='weight', default=0.01,
-                        help='weight of deformation loss (default: 0.01)')
+    parser.add_argument('--lambda', type=float, dest='weight', default=0.01, help='weight of deformation loss (default: 0.01)')
     parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
-    parser.add_argument('--kl-lambda', type=float, default=10,
-                        help='prior lambda regularization for KL loss (default: 10)')
-    parser.add_argument('--flow-logsigma-bias', type=float, default=-10,
-                        help='negative value for initialization of the logsigma layer bias value')
+    parser.add_argument('--kl-lambda', type=float, default=10, help='prior lambda regularization for KL loss (default: 10)')
+    parser.add_argument('--flow-logsigma-bias', type=float, default=-10, help='negative value for initialization of the logsigma layer bias value')
+    parser.add_argument('--sim_model_path', type=str, metavar='PATH', help='path to the checkpoint file for learned sim')
+    parser.add_argument('--sim_config_path', type=str, metavar='PATH', help='path to the config file of learned sim')
+
     # loading and saving parameters
     parser.add_argument('--log-dir', type=str, default=None, help='folder for tensorboard logs')
     parser.add_argument('--loader-name', type=str, default='default', help='volume generator function to use')
-    parser.add_argument('--patient-list-src', type=str, default='/tmp/',
-                        help='directory to store patient list for training and testing')
-    parser.add_argument('--load-segmentation', action='store_true', default=False,
-                        help='use segmentation data for training the network (torch functionality seems to be missing)')
+    parser.add_argument('--patient-list-src', type=str, default='/tmp/', help='directory to store patient list for training and testing')
+    parser.add_argument('--load-segmentation', action='store_true', default=False, help='use segmentation data for training the network (torch functionality seems to be missing)')
     parser.add_argument('--display-freq', type=int, default=20, help='frequency of plotting results in tensorboard')
-    parser.add_argument('--statistics-freq', type=int, default=10,
-                        help='frequency/period of plotting the statistics per number of displaying results')
-    parser.add_argument('--num-statistics-runs', type=int, default=5,
-                        help='number of runs to get each statistic')
-    parser.add_argument('--num-test-imgs', type=int, default=10,
-                        help='number of test images to compare the results with previous one')
+    parser.add_argument('--statistics-freq', type=int, default=10, help='frequency/period of plotting the statistics per number of displaying results')
+    parser.add_argument('--num-statistics-runs', type=int, default=5, help='number of runs to get each statistic')
+    parser.add_argument('--num-test-imgs', type=int, default=10, help='number of test images to compare the results with previous one')
     return parser
 
 
@@ -219,12 +218,12 @@ def create_model(args, bidir, device, inshape, nb_gpus):
     return model
 
 
-def create_optimizers(args, bidir, model):
+def create_optimizers(args, bidir, model, device):
     # set optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     # prepare image loss
     loss_names = []
-    available_loss_images = ['ncc', 'mse', 'ssim', 'mind']
+    available_loss_images = ['ncc', 'mse', 'ssim', 'mind', 'learnedsim']
     if args.image_loss == 'ncc':
         image_loss_func = vxm.losses.NCC().loss
     elif args.image_loss == 'mse':
@@ -233,6 +232,10 @@ def create_optimizers(args, bidir, model):
         image_loss_func = vxm.losses.SSIM().loss
     elif args.image_loss == 'mind':
         image_loss_func = vxm.losses.MIND().loss
+    elif args.image_loss == 'learnedsim':
+        image_loss_func = vxm.losses.LearnedSim(config_path=args.sim_config_path,
+                                                checkpoint_path=args.sim_model_path,
+                                                device=device).loss
     else:
         raise ValueError(f'Image loss should be among {available_loss_images}, but found {args.image_loss}')
     # need two image loss functions if bidirectional
