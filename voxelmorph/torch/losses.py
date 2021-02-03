@@ -396,7 +396,13 @@ class LearnedSim:
         for param in self.model.parameters():
             param.requires_grad = requires_grad
 
+    def change_range(self, y: torch.Tensor):
+        y = (y - y.min())/(y.max() - y.min())  # map to [0 1] if not already
+        return y * 2 - 1
+
     def loss(self, y_true: torch.Tensor, y_pred: torch.Tensor):
+        y_true = self.change_range(y_true)
+        y_pred = self.change_range(y_pred)
         t = self.model.forward(y_true, y_pred, mask=y_pred > 0) ** 2
         if self.reduction == 'sum':
             return t.sum()
