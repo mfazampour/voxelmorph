@@ -376,9 +376,7 @@ class KL:
 
 
 class LearnedSim:
-    def __init__(self, config_path: str, checkpoint_path: str, device='cuda', reduction='mean'):
-        # config = read_json(config_path)
-        # ConfigParser(config=config, resume=Path(checkpoint_path))
+    def __init__(self, checkpoint_path: str, device='cuda', reduction='mean'):
         config = torch.load(checkpoint_path)['config']
         model = torch.load(checkpoint_path)['model']
         s = config.config['model']['args']['s']

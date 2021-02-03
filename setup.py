@@ -22,6 +22,8 @@ setuptools.setup(
         'scipy',
         'nibabel',
         'neurite',
-        'torchio>=0.18'
+        'torchio>=0.18',
+        'pandas',
+        'seaborn'
     ]
 )
