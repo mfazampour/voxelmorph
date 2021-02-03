@@ -29,8 +29,8 @@ from matplotlib import gridspec
 # import voxelmorph with pytorch backend
 os.environ['VXM_BACKEND'] = 'pytorch'
 import voxelmorph as vxm
-from scripts.torch.utils import apply_model
-from scripts.torch.utils import calc_scores
+from scripts.torch.utils_scripts import apply_model
+from scripts.torch.utils_scripts import calc_scores
 
 
 def main():

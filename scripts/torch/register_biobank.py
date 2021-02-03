@@ -34,8 +34,8 @@ from monai.metrics import compute_meandice, compute_hausdorff_distance, compute_
 os.environ['VXM_BACKEND'] = 'pytorch'
 import voxelmorph as vxm
 
-from scripts.torch.utils import calc_scores
-from scripts.torch.utils import create_toy_sample
+from scripts.torch.utils_scripts import calc_scores
+from scripts.torch.utils_scripts import create_toy_sample
 
 
 def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None, resample_after=False):
