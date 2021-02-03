@@ -1,0 +1,4 @@
+[submodule "voxelmorph/torch/learnsim"]
+	path = voxelmorph/torch/learnsim
+	url = https://gitlab.doc.ic.ac.uk/dig15/learnsim/
+	branch = learn-sim
