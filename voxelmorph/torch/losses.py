@@ -389,7 +389,7 @@ class LearnedSim:
         self.reduction = reduction
 
     def set_requires_grad(self, requires_grad=False):
-        """Set requies_grad=Fasle for all the networks to avoid unnecessary computations
+        """Set requies_grad=Fasle to avoid updating the metric during vxm training
         Parameters:
             requires_grad (bool)  -- whether the networks require gradients or not
         """
@@ -397,10 +397,10 @@ class LearnedSim:
             param.requires_grad = requires_grad
 
     def loss(self, y_true: torch.Tensor, y_pred: torch.Tensor):
-        t = self.model.forward(y_true, y_pred, mask=y_pred > 0)
+        t = self.model.forward(y_true, y_pred, mask=y_pred > 0) ** 2
         if self.reduction == 'sum':
             return t.sum()
         elif self.reduction == 'mean':
             return t.mean()
         else:
-            NotImplementedError()
+            raise NotImplementedError("only mean and sum is defined")
