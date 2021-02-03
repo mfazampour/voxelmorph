@@ -1,3 +1,4 @@
+import sys
 from typing import Dict, List
 
 import numpy as np
@@ -38,6 +39,10 @@ def apply_model(model: torch.nn.Module, generator=None, inputs=None, y_true=None
     loss_list = []
     for n, loss_function in enumerate(losses):
         curr_loss = loss_function(y_true[n], y_pred[n]) * weights[n]
+        if 'NCC' in loss_function.__str__():
+            if curr_loss.item() < -1 or curr_loss.item() > 0:
+                print(f'NCC value is not in range, {curr_loss.item()}')
+                sys.exit(-1)
         loss_list.append('%.6f' % curr_loss.item())
         loss += curr_loss
     return loss, loss_list, inputs, y_true, y_pred

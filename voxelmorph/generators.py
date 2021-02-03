@@ -95,7 +95,7 @@ def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True,
         if return_segs:
             segs = [transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(seg_names[i], **load_params))).data.unsqueeze(dim=-1) for i in indices]
             vols.append(np.concatenate(segs, axis=0))
-
+        print([vol_names[i] for i in indices])
         yield tuple(vols)
 
 
