@@ -207,10 +207,10 @@ def create_model(args, bidir, device, inshape, nb_gpus):
             use_probs=args.use_probs,
             flow_logsigma_bias=args.flow_logsigma_bias
         )
-    if nb_gpus > 1:
-        # use multiple GPUs via DataParallel
-        model = torch.nn.DataParallel(model)
-        model.save = model.module.save
+    # if nb_gpus > 1:
+    #     # use multiple GPUs via DataParallel
+    model = torch.nn.DataParallel(model)
+    model.save = model.module.save
     # prepare the model for training and send to device
     model.to(device)
     model.train()
