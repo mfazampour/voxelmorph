@@ -381,7 +381,8 @@ class LearnedSim:
         model = torch.load(checkpoint_path)['model']
         s = config.config['model']['args']['s']
         no_feature_maps = config.config['model']['args']['no_feature_maps']
-        self.model = CNN_SSD(s=s, no_feature_maps=no_feature_maps)
+        learnable = config.config['model']['args']['learnable']
+        self.model = CNN_SSD(learnable=learnable, s=s, no_feature_maps=no_feature_maps)
         self.model.load_state_dict(model)
         self.model.to(device)
         self.set_requires_grad(False)
