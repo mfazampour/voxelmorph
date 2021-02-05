@@ -222,7 +222,7 @@ def create_optimizers(args, bidir, model, device):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     # prepare image loss
     loss_names = []
-    available_loss_images = ['ncc', 'mse', 'ssim', 'mind', 'learnsim']
+    available_loss_images = ['ncc', 'mse', 'ssim', 'mind', 'learnsim', 'lcc']
     if args.image_loss == 'ncc':
         image_loss_func = vxm.losses.NCC().loss
     elif args.image_loss == 'mse':
@@ -233,6 +233,8 @@ def create_optimizers(args, bidir, model, device):
         image_loss_func = vxm.losses.MIND().loss
     elif args.image_loss == 'learnsim':
         image_loss_func = vxm.losses.LearnedSim(checkpoint_path=args.sim_model_path, device=device).loss
+    elif args.image_loss == 'lcc':
+        image_loss_func = vxm.losses.LCC(s=4, device=device).loss
     else:
         raise ValueError(f'Image loss should be among {available_loss_images}, but found {args.image_loss}')
     # need two image loss functions if bidirectional

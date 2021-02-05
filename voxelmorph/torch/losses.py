@@ -410,3 +410,48 @@ class LearnedSim:
             return t.mean()
         else:
             raise NotImplementedError("only mean and sum is defined")
+
+
+class LCC:
+    """
+    local cross-correlation
+    """
+
+    def __init__(self, s=4, device='cuda'):
+        """
+
+        Args:
+            s: half-window size
+        """
+        super(LCC, self).__init__()
+        self.s = s
+        self.kernel_size = self.s * 2 + 1
+        self.sz = float(self.kernel_size ** 3)
+
+        self.padding = (self.s, self.s, self.s, self.s, self.s, self.s)
+
+        self.kernel = nn.Conv3d(1, 1, kernel_size=self.kernel_size, stride=1, bias=False)
+        nn.init.ones_(self.kernel.weight)
+        self.kernel.weight.requires_grad_(False)
+        self.kernel = self.kernel.to(device)
+
+    def loss(self, y_true: torch.Tensor, y_pred: torch.Tensor, mask: torch.Tensor = None):
+        cross, var_F, var_M = self.map(y_true, y_pred)
+        return self.reduce(cross, var_F, var_M, mask)
+
+    def map(self, im_fixed, im_moving):
+        im_fixed = F.pad(im_fixed, list(self.padding), mode='replicate')
+        im_moving = F.pad(im_moving, list(self.padding), mode='replicate')
+
+        u_F = F.pad(self.kernel(im_fixed), list(self.padding), mode='replicate') / self.sz
+        u_M = F.pad(self.kernel(im_moving), list(self.padding), mode='replicate') / self.sz
+
+        cross = self.kernel((im_fixed - u_F) * (im_moving - u_M))
+        var_F = self.kernel((im_fixed - u_F) * (im_fixed - u_F))
+        var_M = self.kernel((im_moving - u_M) * (im_moving - u_M))
+
+        return cross, var_F, var_M
+
+    def reduce(self, cross, var_F, var_M, mask: torch.Tensor = None):
+        lcc = cross * cross / (var_F * var_M + 1e-10)
+        return -1.0 * torch.mean(lcc * mask) if mask is not None else -1.0 * torch.mean(lcc)
