@@ -23,15 +23,14 @@ from . import py
 
 
 def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None):
-    if min_value is None:
-        transforms = []
-    else:
-        rescale = RescaleIntensity((min_value, max_value))
-        transforms = [rescale]
+    transforms = []
     if target_spacing is not None:
         transforms.append(Resample(target_spacing))
     if target_shape is not None:
         transforms.append(CropOrPad(target_shape=target_shape))
+    if min_value is not None:
+        rescale = RescaleIntensity((min_value, max_value))
+        transforms.append(rescale)
     return Compose(transforms)
 
 
