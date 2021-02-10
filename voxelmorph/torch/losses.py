@@ -405,7 +405,7 @@ class LearnedSim:
     def loss(self, y_true: torch.Tensor, y_pred: torch.Tensor):
         y_true = self.change_range(y_true)
         y_pred = self.change_range(y_pred)
-        t = self.model.forward(y_true, y_pred, mask=y_pred > 0) ** 2
+        t = self.model.forward(y_true, y_pred, mask=y_true.detach() > 0)
         if self.reduction == 'sum':
             return t.sum()
         elif self.reduction == 'mean':
