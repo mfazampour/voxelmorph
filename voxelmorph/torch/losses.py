@@ -7,7 +7,10 @@ import torch.nn.functional as F
 from torch import nn
 from torch.autograd import Variable
 
-from .learnsim.model.model import CNN_SSD
+try:
+    from .learnsim.model.model import CNN_SSD
+except:
+    print("failed to load learn sim model")
 
 class NCC:
     """
