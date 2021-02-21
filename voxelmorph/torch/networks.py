@@ -140,8 +140,8 @@ class VxmDense(LoadableModel):
             bidir: Enable bidirectional cost function. Default is False.
             use_probs: Use probabilities in flow field. Default is False.
             flow_logsigma_bias: negative value for initialization of the logsigma layer bias value
-            nb_external_feat: tmp
-            level_external_feat: tmp
+            nb_external_feat: TODO
+            level_external_feat: TODO
         """
         super().__init__()
 
@@ -253,11 +253,11 @@ class VxmDense(LoadableModel):
         # return non-integrated flow field if training
         if not registration:  # it's training
             if self.use_probs:
-                return (y_source, y_target, flow_params) if self.bidir else (y_source, flow_params)
+                return (y_source, y_target, flow_params, neg_flow) if self.bidir else (y_source, flow_params)
             else:
-                return (y_source, y_target, preint_flow) if self.bidir else (y_source, preint_flow)
+                return (y_source, y_target, preint_flow, neg_flow) if self.bidir else (y_source, preint_flow)
         else:
-            return y_source, pos_flow
+            return y_source, pos_flow, neg_flow if self.bidir else y_source, pos_flow
 
 
 class ConvBlock(nn.Module):
