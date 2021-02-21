@@ -117,7 +117,6 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
     parser.add_argument('--kl-lambda', type=float, default=10, help='prior lambda regularization for KL loss (default: 10)')
     parser.add_argument('--flow-logsigma-bias', type=float, default=-10, help='negative value for initialization of the logsigma layer bias value')
-    parser.add_argument('--sim_model_path', type=str, metavar='PATH', help='path to the checkpoint file for learned sim')
 
     # loading and saving parameters
     parser.add_argument('--log-dir', type=str, default=None, help='folder for tensorboard logs')
@@ -231,8 +230,6 @@ def create_optimizers(args, bidir, model, device):
         image_loss_func = vxm.losses.SSIM().loss
     elif args.image_loss == 'mind':
         image_loss_func = vxm.losses.MIND().loss
-    elif args.image_loss == 'learnsim':
-        image_loss_func = vxm.losses.LearnedSim(checkpoint_path=args.sim_model_path, device=device).loss
     elif args.image_loss == 'lcc':
         image_loss_func = vxm.losses.LCC(s=4, device=device).loss
     else:

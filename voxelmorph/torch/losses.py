@@ -7,11 +7,6 @@ import torch.nn.functional as F
 from torch import nn
 from torch.autograd import Variable
 
-try:
-    from .learnsim.model.model import CNN_SSD
-except:
-    print("failed to load learn sim model")
-
 class NCC:
     """
     Local (over window) normalized cross correlation loss.
@@ -376,45 +371,6 @@ class KL:
             # combine terms
             loss += 0.5 * ndims * (sigma_term + prec_term)  # ndims because we averaged over dimensions as well
         return loss/y_pred.shape[0]
-
-
-class LearnedSim:
-    def __init__(self, checkpoint_path: str, device='cuda', reduction='mean'):
-        config = torch.load(checkpoint_path)['config']
-        model = torch.load(checkpoint_path)['model']
-        s = config.config['model']['args']['s']
-        no_feature_maps = config.config['model']['args']['no_feature_maps']
-        learnable = config.config['model']['args']['learnable']
-        self.model = CNN_SSD(learnable=learnable, s=s, no_feature_maps=no_feature_maps)
-        self.model = torch.nn.DataParallel(self.model)
-        self.model.load_state_dict(model)
-        self.model.to(device)
-        self.set_requires_grad(False)
-
-        self.reduction = reduction
-
-    def set_requires_grad(self, requires_grad=False):
-        """Set requies_grad=Fasle to avoid updating the metric during vxm training
-        Parameters:
-            requires_grad (bool)  -- whether the networks require gradients or not
-        """
-        for param in self.model.parameters():
-            param.requires_grad = requires_grad
-
-    def change_range(self, y: torch.Tensor):
-        y = (y - y.min())/(y.max() - y.min())  # map to [0 1] if not already
-        return y * 2 - 1
-
-    def loss(self, y_true: torch.Tensor, y_pred: torch.Tensor):
-        y_true = self.change_range(y_true)
-        y_pred = self.change_range(y_pred)
-        t = self.model.forward(y_true, y_pred, mask=y_true.detach() > 0)
-        if self.reduction == 'sum':
-            return t.sum()
-        elif self.reduction == 'mean':
-            return t.mean()
-        else:
-            raise NotImplementedError("only mean and sum is defined")
 
 
 class LCC:
