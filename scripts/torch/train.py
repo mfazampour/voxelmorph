@@ -109,6 +109,8 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument('--bidir', action='store_true', help='enable bidirectional cost function')
     parser.add_argument('--inshape', type=int, nargs='+', help='after cropping shape of input. default is equal to image size. specify if the input can\'t path through UNet')
     parser.add_argument('--target-spacing', type=float, default=1, help='target spacing of the inputs to the network')
+    parser.add_argument('--nb_external_feat', type=int, default=None, help='num of channels of external latent feat')
+    parser.add_argument('--level_external_feat', type=int, default=None, help='level to add the external latent feat')
 
     # loss hyperparameters
     parser.add_argument('--image-loss', default='mse', help='image reconstruction loss - can be mse or ncc (default: mse)')
@@ -204,7 +206,9 @@ def create_model(args, bidir, device, inshape, nb_gpus):
             int_steps=args.int_steps,
             int_downsize=args.int_downsize,
             use_probs=args.use_probs,
-            flow_logsigma_bias=args.flow_logsigma_bias
+            flow_logsigma_bias=args.flow_logsigma_bias,
+            nb_external_feat=args.nb_external_feat,
+            level_external_feat=args.level_external_feat
         )
     # if nb_gpus > 1:
     #     # use multiple GPUs via DataParallel

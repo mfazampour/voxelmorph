@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
+import numpy as np
 
 from .. import default_unet_features
 from . import layers
@@ -18,8 +19,8 @@ class Unet(nn.Module):
         decoder: [32, 32, 32, 32, 32, 16, 16]
     """
 
-    def __init__(self, inshape, nb_features=None, nb_levels=None, feat_mult=1):
-        super().__init__()
+    def __init__(self, inshape, nb_features=None, nb_levels=None, feat_mult=1,
+                 nb_external_feat: int = None, level_external_feat=2):
         """
         Parameters:
             inshape: Input shape. e.g. (192, 192, 192)
@@ -29,6 +30,7 @@ class Unet(nn.Module):
             nb_levels: Number of levels in unet. Only used when nb_features is an integer. Default is None.
             feat_mult: Per-level feature multiplier. Only used when nb_features is an integer. Default is 1.
         """
+        super().__init__()
 
         # ensure correct dimensionality
         ndims = len(inshape)
@@ -55,12 +57,18 @@ class Unet(nn.Module):
         # configure encoder (down-sampling path)
         prev_nf = 2
         self.downarm = nn.ModuleList()
-        for nf in self.enc_nf:
+        for level, (nf) in enumerate(self.enc_nf):
             self.downarm.append(ConvBlock(ndims, prev_nf, nf, stride=2))
-            prev_nf = nf
+            if nb_external_feat is not None and level_external_feat - 1 == level:
+                prev_nf = nf + nb_external_feat
+            else:
+                prev_nf = nf
 
         # configure decoder (up-sampling path)
-        enc_history = list(reversed(self.enc_nf))
+        enc_nf_ = self.enc_nf
+        if nb_external_feat is not None:
+            enc_nf_[level_external_feat - 1] += nb_external_feat
+        enc_history = list(reversed(enc_nf_))
         self.uparm = nn.ModuleList()
         for i, nf in enumerate(self.dec_nf[:len(self.enc_nf)]):
             channels = prev_nf + enc_history[i] if i > 0 else prev_nf
@@ -74,12 +82,17 @@ class Unet(nn.Module):
             self.extras.append(ConvBlock(ndims, prev_nf, nf, stride=1))
             prev_nf = nf
 
-    def forward(self, x):
+        self.level_external_feat = level_external_feat
+
+    def forward(self, x, feat=None):
 
         # get encoder activations
         x_enc = [x]
-        for layer in self.downarm:
-            x_enc.append(layer(x_enc[-1]))
+        for level, (layer) in enumerate(self.downarm):
+            out = layer(x_enc[-1])
+            if feat is not None and self.level_external_feat - 1 == level:
+                out = torch.cat([out, feat], dim=1)
+            x_enc.append(out)
 
         # conv, upsample, concatenate series
         x = x_enc.pop()
@@ -110,7 +123,9 @@ class VxmDense(LoadableModel):
                  int_downsize=2,
                  bidir=False,
                  use_probs=False,
-                 flow_logsigma_bias=-10):
+                 flow_logsigma_bias=-10,
+                 nb_external_feat=None,
+                 level_external_feat=2):
         """ 
         Parameters:
             inshape: Input shape. e.g. (192, 192, 192)
@@ -125,6 +140,8 @@ class VxmDense(LoadableModel):
             bidir: Enable bidirectional cost function. Default is False.
             use_probs: Use probabilities in flow field. Default is False.
             flow_logsigma_bias: negative value for initialization of the logsigma layer bias value
+            nb_external_feat: tmp
+            level_external_feat: tmp
         """
         super().__init__()
 
@@ -140,7 +157,9 @@ class VxmDense(LoadableModel):
             inshape,
             nb_features=nb_unet_features,
             nb_levels=nb_unet_levels,
-            feat_mult=unet_feat_mult
+            feat_mult=unet_feat_mult,
+            nb_external_feat=nb_external_feat,
+            level_external_feat=level_external_feat
         )
 
         # configure unet to flow field layer
@@ -178,18 +197,20 @@ class VxmDense(LoadableModel):
         # configure transformer
         self.transformer = layers.SpatialTransformer(inshape)
 
-    def forward(self, source, target, registration=False, measure_sampling_speed=False):
+    def forward(self, source, target, registration=False, measure_sampling_speed=False, feat=None):
         '''
         Parameters:
             measure_sampling_speed: flag to calculate the efficiency of sampling from the posterior
             source: Source image tensor.
             target: Target image tensor.
             registration: Return transformed image and flow. Default is False.
+            feat: encoded shape features from another network
+            feat_level: the level to include these features in the unet arch.
         '''
 
         # concatenate inputs and propagate unet
         x = torch.cat([source, target], dim=1)
-        x = self.unet_model(x)
+        x = self.unet_model.forward(x, feat=feat)
 
         # transform into flow field
         if self.use_probs:
