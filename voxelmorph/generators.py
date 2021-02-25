@@ -304,6 +304,55 @@ def scan_to_scan(vol_names, bidir=False, batch_size=1, prob_same=0, no_warp=Fals
         yield (invols, outvols)
 
 
+def scan_to_atlas_biobank(source_folder, atlas: str, patient_list_src: str, is_train=True,
+                          bidir=False, batch_size=1, no_warp=False, return_segs=False,
+                          img_pattern='T2_FLAIR_unbiased_brain_affine_to_mni.nii.gz',
+                          seg_pattern='T1_first_all_fast_firstseg_affine_to_mni.nii.gz',
+                          target_shape=None, target_spacing=None, resize_factor=1, **kwargs):
+
+
+    gen = volgen_biobank(source_folder=source_folder, patient_list_src=patient_list_src,
+                         batch_size=batch_size, return_segs=return_segs, img_pattern=img_pattern, seg_pattern=seg_pattern,
+                         target_shape=target_shape, target_spacing=target_spacing, resize_factor=resize_factor, is_train=is_train,
+                         **kwargs)
+
+    vol_names, seg_names = load_vol_pathes(patient_list_src, source_folder, img_pattern=img_pattern,
+                                           seg_pattern=seg_pattern, is_train=is_train)
+
+    transform = biobank_transform(target_shape, target_spacing=target_spacing)
+    transform_seg = biobank_transform(target_shape, target_spacing=target_spacing, min_value=None)
+    # load volumes and concatenate
+    load_params = dict(np_var='vol', add_batch_axis=True, add_feat_axis=False, pad_shape=None, resize_factor=resize_factor)
+    path = [p for p in vol_names if atlas in p][0]
+    atlas_img = np.expand_dims(transform(py.utils.load_volfile(path, **load_params)), axis=-1)
+    path = [p for p in seg_names if atlas in p][0]
+    seg_a = transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(path, **load_params))).data.unsqueeze(dim=-1).numpy()
+
+    atlas = atlas_img
+    shape = atlas.shape[1:-1]
+    zeros = np.zeros((batch_size, *shape, len(shape)))
+
+    while True:
+        seg_d = None
+
+        data1 = next(gen)
+        scan = data1[0]
+
+        if return_segs:
+            seg_d = data1[1]
+
+        invols = [scan, atlas]
+        outvols = [atlas, scan] if bidir else [atlas]
+        if not no_warp:
+            outvols.append(zeros)
+
+        if seg_d is not None:
+            invols.append(seg_a)
+            outvols.append(seg_d)
+
+        yield (invols, outvols)
+
+
 def scan_to_atlas(vol_names, atlas, bidir=False, batch_size=1, no_warp=False, **kwargs):
     """
     Generator for scan-to-atlas registration.

@@ -169,10 +169,17 @@ def create_data_generator(args, is_train=True):
     if 'inshape' not in args:
         args.inshape = None
     if args.atlas:
-        # scan-to-atlas generator
-        atlas = vxm.py.utils.load_volfile(args.atlas, np_var='vol', add_batch_axis=True, add_feat_axis=add_feat_axis)
-        generator = vxm.generators.scan_to_atlas(train_vol_names, atlas, batch_size=args.batch_size, bidir=args.bidir,
-                                                 add_feat_axis=add_feat_axis)
+        if args.loader_name == 'biobank':
+            generator = vxm.generators.scan_to_atlas_biobank(source_folder=train_vol_names, atlas=args.atlas, batch_size=args.batch_size,
+                                                bidir=args.bidir, add_feat_axis=add_feat_axis, target_shape=args.inshape,
+                                                return_segs=not is_train, target_spacing=args.target_spacing,
+                                                patient_list_src=args.patient_list_src, is_train=True)
+        else:
+            # scan-to-atlas generator
+            atlas = vxm.py.utils.load_volfile(args.atlas, np_var='vol', add_batch_axis=True, add_feat_axis=add_feat_axis)
+            generator = vxm.generators.scan_to_atlas(train_vol_names, atlas, batch_size=args.batch_size, bidir=args.bidir,
+                                                     add_feat_axis=add_feat_axis)
+
     else:
         # scan-to-scan generator
         return_segs = args.load_segmentation
