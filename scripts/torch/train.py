@@ -301,6 +301,9 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
                 else:
                     log_sigma = None
                     mean = None
+                if args.bidir:
+                    loss_names = [loss_names[0], *loss_names[2:]]
+                    loss_list = [str(float(loss_list[0])+float(loss_list[1])), *loss_list[2:]]
                 tensorboard_log(model, test_generator, loss_names, device, loss_list, writer, ssim=ssim,
                                 log_sigma=log_sigma, mean=mean, global_step=global_step)
                 evaluate_with_segmentation(model, test_generator, device=device, args=args, writer=writer,
@@ -308,7 +311,6 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
                                            calc_statistics=calc_statistics)
                 model.train()
         torch.cuda.empty_cache()
-        GPUtil.showUtilization()
     # final model save
     model.save(os.path.join(model_dir, '%04d.pt' % args.epochs))
 
