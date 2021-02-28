@@ -326,29 +326,28 @@ def scan_to_atlas_biobank(source_folder, atlas: str, patient_list_src: str, is_t
     path = [p for p in vol_names if atlas in p][0]
     atlas_img = np.expand_dims(transform(py.utils.load_volfile(path, **load_params)), axis=-1)
     path = [p for p in seg_names if atlas in p][0]
-    seg_a = transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(path, **load_params))).data.unsqueeze(dim=-1).numpy()
+    seg_atlas = transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(path, **load_params))).data.unsqueeze(dim=-1).numpy()
 
-    atlas = atlas_img
-    shape = atlas.shape[1:-1]
+    shape = atlas_img.shape[1:-1]
     zeros = np.zeros((batch_size, *shape, len(shape)))
 
     while True:
-        seg_d = None
+        seg_scan = None
 
         data1 = next(gen)
         scan = data1[0]
 
         if return_segs:
-            seg_d = data1[1]
+            seg_scan = data1[1]
 
-        invols = [scan, atlas]
-        outvols = [atlas, scan] if bidir else [atlas]
+        invols = [scan, atlas_img]
+        outvols = [atlas_img, scan] if bidir else [atlas_img]
         if not no_warp:
             outvols.append(zeros)
 
-        if seg_d is not None:
-            invols.append(seg_a)
-            outvols.append(seg_d)
+        if seg_scan is not None:
+            invols.append(seg_scan)
+            outvols.append(seg_atlas)
 
         yield (invols, outvols)
 
