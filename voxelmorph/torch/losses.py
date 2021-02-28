@@ -275,9 +275,10 @@ class KL:
     Kullback–Leibler divergence for probabilistic flows.
     """
 
-    def __init__(self, prior_lambda):
+    def __init__(self, prior_lambda, reduction='mean'):
         self.prior_lambda = prior_lambda
         self.D = None
+        self.reduction = reduction
 
     def _adj_filt(self, ndims):
         """
@@ -338,7 +339,12 @@ class KL:
             r = [d, *range(d), *range(d + 1, ndims + 2)]
             y = y_pred.permute([0, *range(2, ndims + 2), 1]).permute(r)  # first change to TF convention then perm
             df = y[1:, ...] - y[:-1, ...]
-            sm += (df * df).mean()
+            if self.reduction == 'mean':
+                sm += (df * df).mean()
+            elif self.reduction == 'sum':
+                sm += (df * df).sum()
+            else:
+                raise NotImplementedError("only mean and sum is defined")
 
         return 0.5 * sm / ndims
 
@@ -367,7 +373,13 @@ class KL:
 
             # sigma terms
             sigma_term = self.prior_lambda * self.D * torch.exp(log_sigma) - log_sigma
-            sigma_term = sigma_term.mean()
+            if self.reduction == 'mean':
+                sigma_term = sigma_term.mean()
+            elif self.reduction == 'sum':
+                sigma_term = sigma_term.sum()
+            else:
+                raise NotImplementedError("only mean and sum is defined")
+
 
             # precision terms
             # note needs 0.5 twice, one here (inside self.prec_loss), one below
@@ -388,7 +400,7 @@ class LearnedSim:
         self.model = CNN_SSD(learnable=learnable, s=s, no_feature_maps=no_feature_maps)
         self.model = torch.nn.DataParallel(self.model)
         self.model.load_state_dict(model)
-        self.model.to(device)
+        self.model = self.model.to(device)
         self.set_requires_grad(False)
 
         self.reduction = reduction

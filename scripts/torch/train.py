@@ -118,6 +118,7 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument('--kl-lambda', type=float, default=10, help='prior lambda regularization for KL loss (default: 10)')
     parser.add_argument('--flow-logsigma-bias', type=float, default=-10, help='negative value for initialization of the logsigma layer bias value')
     parser.add_argument('--sim_model_path', type=str, metavar='PATH', help='path to the checkpoint file for learned sim')
+    parser.add_argument('--reduction', type=str, default='mean', help='type of reduction used for learn-sim and KL', choices=['sum', 'mean'])
 
     # loading and saving parameters
     parser.add_argument('--log-dir', type=str, default=None, help='folder for tensorboard logs')
@@ -239,7 +240,8 @@ def create_optimizers(args, bidir, model, device):
     elif args.image_loss == 'mind':
         image_loss_func = vxm.losses.MIND().loss
     elif args.image_loss == 'learnsim':
-        image_loss_func = vxm.losses.LearnedSim(checkpoint_path=args.sim_model_path, device=device).loss
+        image_loss_func = vxm.losses.LearnedSim(checkpoint_path=args.sim_model_path,
+                                                device=device, reduction=args.reduction).loss
     elif args.image_loss == 'lcc':
         image_loss_func = vxm.losses.LCC(s=4, device=device).loss
     else:
@@ -256,7 +258,7 @@ def create_optimizers(args, bidir, model, device):
 
     # prepare deformation loss
     if args.use_probs:
-        losses += [vxm.losses.KL(args.kl_lambda).loss]
+        losses += [vxm.losses.KL(args.kl_lambda, reduction=args.reduction).loss]
         loss_names += ['KL']
     else:
         losses += [vxm.losses.Grad('l2', loss_mult=args.int_downsize).loss]
