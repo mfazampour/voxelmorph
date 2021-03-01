@@ -318,6 +318,7 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
                 evaluate_with_segmentation(model, test_generator, device=device, args=args, writer=writer,
                                            global_step=global_step, transformer=transformer,
                                            calc_statistics=calc_statistics)
+                plt.close("all")
                 model.train()
         torch.cuda.empty_cache()
     # final model save
@@ -335,9 +336,10 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
     figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred.cpu(),
                                            jacob=torch.tensor(jacob).view_as(y_true[0]),
                                            deformation=ddf.cpu(), log_sigma=log_sigma, mean=mean)
-    writer.add_figure(tag='volumes',
-                      figure=figure,
-                      global_step=global_step)
+    writer.add_figure(tag='volumes', figure=figure, global_step=global_step, close=False)
+    figure.clf()
+    plt.close(figure)
+
     for name, value in zip(loss_names, list(map(float, loss_list))):
         writer.add_scalar(f'loss/{name}', value, global_step=global_step)
 
@@ -411,9 +413,9 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
     if len(seg_maps) > 0:
         seg_maps = seg_maps[0]
         figure = vxm.torch.utils.create_seg_figure(*seg_maps)
-        writer.add_figure(tag='seg_maps',
-                          figure=figure,
-                          global_step=global_step)
+        writer.add_figure(tag='seg_maps', figure=figure, global_step=global_step, close=False)
+        figure.clf()
+        plt.close(figure)
 
     if calc_statistics:
         log_statistics(torch.cat(list_hd_std), structures_dict.values(), writer=writer,

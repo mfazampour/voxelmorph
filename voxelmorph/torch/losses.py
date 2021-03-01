@@ -414,13 +414,14 @@ class LearnedSim:
             param.requires_grad = requires_grad
 
     def change_range(self, y: torch.Tensor):
-        y = (y - y.min())/(y.max() - y.min())  # map to [0 1] if not already
-        return y * 2 - 1
+        eps = 1e-5
+        y_ = (y - y.min())/(y.max() - y.min() + eps)  # map to [0 1] if not already
+        return y_ * 2 - 1
 
     def loss(self, y_true: torch.Tensor, y_pred: torch.Tensor):
-        y_true = self.change_range(y_true)
-        y_pred = self.change_range(y_pred)
-        t = self.model.forward(y_true, y_pred, mask=y_true.detach() > -1)
+        y_true_ = self.change_range(y_true)
+        y_pred_ = self.change_range(y_pred)
+        t = self.model.forward(y_true_, y_pred_, mask=y_true_.detach() > -1)
         if self.reduction == 'sum':
             return t.sum()
         elif self.reduction == 'mean':
