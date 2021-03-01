@@ -316,8 +316,9 @@ def scan_to_atlas_biobank(source_folder, atlas: str, patient_list_src: str, is_t
                          target_shape=target_shape, target_spacing=target_spacing, resize_factor=resize_factor, is_train=is_train,
                          **kwargs)
 
+    # read atlas
     vol_names, seg_names = load_vol_pathes(patient_list_src, source_folder, img_pattern=img_pattern,
-                                           seg_pattern=seg_pattern, is_train=is_train)
+                                           seg_pattern=seg_pattern, is_train=True)  # atlas is in training set
 
     transform = biobank_transform(target_shape, target_spacing=target_spacing)
     transform_seg = biobank_transform(target_shape, target_spacing=target_spacing, min_value=None)
@@ -327,6 +328,11 @@ def scan_to_atlas_biobank(source_folder, atlas: str, patient_list_src: str, is_t
     atlas_img = np.expand_dims(transform(py.utils.load_volfile(path, **load_params)), axis=-1)
     path = [p for p in seg_names if atlas in p][0]
     seg_atlas = transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(path, **load_params))).data.unsqueeze(dim=-1).numpy()
+
+    # read atlas mask
+    path = os.path.join(Path(path).parent, 'T1_brain_mask_affine_to_mni.nii.gz')
+    mask_atlas = transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(path, **load_params))).data.unsqueeze(dim=1).bool()
+    yield mask_atlas
 
     shape = atlas_img.shape[1:-1]
     zeros = np.zeros((batch_size, *shape, len(shape)))

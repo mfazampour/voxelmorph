@@ -391,7 +391,7 @@ class KL:
 
 
 class LearnedSim:
-    def __init__(self, checkpoint_path: str, device='cuda', reduction='mean'):
+    def __init__(self, checkpoint_path: str, device='cuda', reduction='mean', mask: torch.Tensor = None):
         config = torch.load(checkpoint_path)['config']
         model = torch.load(checkpoint_path)['model']
         s = config.config['model']['args']['s']
@@ -404,6 +404,7 @@ class LearnedSim:
         self.set_requires_grad(False)
 
         self.reduction = reduction
+        self.mask = mask.to(device) if mask is not None else None
 
     def set_requires_grad(self, requires_grad=False):
         """Set requies_grad=Fasle to avoid updating the metric during vxm training
@@ -421,7 +422,8 @@ class LearnedSim:
     def loss(self, y_true: torch.Tensor, y_pred: torch.Tensor):
         y_true_ = self.change_range(y_true)
         y_pred_ = self.change_range(y_pred)
-        t = self.model.forward(y_true_, y_pred_, mask=y_true_.detach() > -1)
+        mask_ = self.mask if self.mask is not None else y_true_.detach() > -0.95
+        t = self.model.forward(y_true_, y_pred_, mask=mask_)
         if self.reduction == 'sum':
             return t.sum()
         elif self.reduction == 'mean':

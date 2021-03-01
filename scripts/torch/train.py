@@ -174,7 +174,8 @@ def create_data_generator(args, is_train=True):
             generator = vxm.generators.scan_to_atlas_biobank(source_folder=train_vol_names, atlas=args.atlas, batch_size=args.batch_size,
                                                 bidir=args.bidir, add_feat_axis=add_feat_axis, target_shape=args.inshape,
                                                 return_segs=not is_train, target_spacing=args.target_spacing,
-                                                patient_list_src=args.patient_list_src, is_train=True)
+                                                patient_list_src=args.patient_list_src, is_train=is_train)
+            args.mask = next(generator)
         else:
             # scan-to-atlas generator
             atlas = vxm.py.utils.load_volfile(args.atlas, np_var='vol', add_batch_axis=True, add_feat_axis=add_feat_axis)
@@ -240,8 +241,9 @@ def create_optimizers(args, bidir, model, device):
     elif args.image_loss == 'mind':
         image_loss_func = vxm.losses.MIND().loss
     elif args.image_loss == 'learnsim':
+        mask = args.mask if hasattr(args, 'mask') else None
         image_loss_func = vxm.losses.LearnedSim(checkpoint_path=args.sim_model_path,
-                                                device=device, reduction=args.reduction).loss
+                                                device=device, reduction=args.reduction, mask=mask).loss
     elif args.image_loss == 'lcc':
         image_loss_func = vxm.losses.LCC(s=4, device=device).loss
     else:
