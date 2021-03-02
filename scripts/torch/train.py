@@ -251,12 +251,11 @@ def create_optimizers(args, bidir, model, device):
     # need two image loss functions if bidirectional
     if bidir:
         losses = [image_loss_func, image_loss_func]
-        loss_names += [args.image_loss, args.image_loss]
         weights = [0.5, 0.5]
     else:
         losses = [image_loss_func]
-        loss_names += [args.image_loss]
         weights = [1]
+    loss_names += [args.image_loss]
 
     # prepare deformation loss
     if args.use_probs:
@@ -313,7 +312,6 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
                     log_sigma = None
                     mean = None
                 if args.bidir:
-                    loss_names = [loss_names[0], *loss_names[2:]]
                     loss_list = [str(float(loss_list[0])+float(loss_list[1])), *loss_list[2:]]
                 tensorboard_log(model, test_generator, loss_names, device, loss_list, writer, ssim=ssim,
                                 log_sigma=log_sigma, mean=mean, global_step=global_step)
@@ -440,13 +438,13 @@ def log_statistics(scores_std: torch.Tensor, labels, writer: SummaryWriter, titl
 
 
 def log_input_params(args: argparse.Namespace, writer: SummaryWriter):
-    cell_data = [[key, f'{value}'] for key, value in zip(vars(args).keys(), vars(args).values())]
-    fig, ax = plt.subplots(1, 1)
-    ax.table(cellText=cell_data,
-             loc='center')
-    fig.set_size_inches(6, 8)
-    ax.set_axis_off()
-    writer.add_figure('Params', fig)
+    # cell_data = [[key, f'{value}'] for key, value in zip(vars(args).keys(), vars(args).values())]
+    # fig, ax = plt.subplots(1, 1)
+    # ax.table(cellText=cell_data,
+    #          loc='center')
+    # fig.set_size_inches(6, 8)
+    # ax.set_axis_off()
+    # writer.add_figure('Params', fig)
     param_text = "\n\n".join(["{key:<20}:{value:>40}".format(key=key, value=f'{value}')
                               for key, value in zip(vars(args).keys(), vars(args).values())])
     writer.add_text('params', param_text)
