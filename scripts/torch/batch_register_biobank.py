@@ -62,7 +62,7 @@ def main():
 
 
     with torch.no_grad():
-        for i in range(args.num_test_imgs):
+        for im_num in range(args.num_test_imgs):
             inputs, y_true = next(generator)
             if not isinstance(inputs[0], torch.Tensor):
                 inputs = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in inputs]
@@ -85,11 +85,11 @@ def main():
                 input_ = [moving, fixed, moving_label]
 
             df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model_base, args, device, df_ASD,
-                                                      df_DSC, df_HD, df_Jac, i, resizer, structures_dict,
+                                                      df_DSC, df_HD, df_Jac, im_num, resizer, structures_dict,
                                                       transformer, args.method_base)
 
             df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model_test, args, device,
-                                                      df_ASD, df_DSC, df_HD, df_Jac, i, resizer, structures_dict,
+                                                      df_ASD, df_DSC, df_HD, df_Jac, im_num, resizer, structures_dict,
                                                       transformer, args.method_test)
 
             torch.cuda.empty_cache()
@@ -102,7 +102,7 @@ def main():
     df_HD.to_csv(os.path.join(args.output_dir, 'hd.csv'))
 
 
-def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_DSC, df_HD, df_Jac, i, resizer,
+def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_DSC, df_HD, df_Jac, im_num, resizer,
               structures_dict, transformer, method):
     dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs = \
         calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
@@ -111,9 +111,9 @@ def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_
     dice_score = dice_scores.mean(dim=0, keepdim=True)
     hd_score = hd_scores.mean(dim=0, keepdim=True)
     asd_score = asd_scores.mean(dim=0, keepdim=True)
-    df_DSC = add_to_data_frame(dice_scores.cpu(), df_DSC, 'DSC', im_num=i, structures_dict=structures_dict, method=method)
-    df_HD = add_to_data_frame(hd_scores.cpu(), df_HD, 'HD', im_num=i, structures_dict=structures_dict, method=method)
-    df_ASD = add_to_data_frame(asd_scores.cpu(), df_ASD, 'ASD', im_num=i, structures_dict=structures_dict, method=method)
+    df_DSC = add_to_data_frame(dice_scores.cpu(), df_DSC, 'DSC', im_num=im_num, structures_dict=structures_dict, method=method)
+    df_HD = add_to_data_frame(hd_scores.cpu(), df_HD, 'HD', im_num=im_num, structures_dict=structures_dict, method=method)
+    df_ASD = add_to_data_frame(asd_scores.cpu(), df_ASD, 'ASD', im_num=im_num, structures_dict=structures_dict, method=method)
     print('---------------------------------------')
     print('stats')
     print('---------------------------------------')
@@ -134,7 +134,7 @@ def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_
         j_count.append(c)
         j_ratio.append(r)
     n = args.num_statistics_runs
-    scores_dict = {'im_pair': [i] * n, "count": j_count, 'ratio': j_ratio, 'method': [method] * n}
+    scores_dict = {'im_pair': [im_num] * n, "count": j_count, 'ratio': j_ratio, 'method': [method] * n}
     tmp_df = pd.DataFrame.from_dict(scores_dict)
     df_Jac = df_Jac.append(tmp_df, ignore_index=True)
     return df_ASD, df_DSC, df_HD, df_Jac
