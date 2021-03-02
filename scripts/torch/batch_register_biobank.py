@@ -1,0 +1,216 @@
+import os
+import argparse
+from datetime import datetime
+
+import numpy as np
+import pandas as pd
+import nibabel as nib
+import torch
+import torchio
+from torchio.transforms import (
+    RescaleIntensity,
+    Compose,
+    CropOrPad,
+    Resample
+)
+import SimpleITK as sitk
+# from tvtk.api import tvtk, write_data
+
+from monai.metrics import compute_meandice, compute_hausdorff_distance, compute_average_surface_distance
+
+# import voxelmorph with pytorch backend
+os.environ['VXM_BACKEND'] = 'pytorch'
+import voxelmorph as vxm
+# from voxelmorph.generators import biobank_transform
+
+from scripts.torch.utils_scripts import calc_scores
+from scripts.torch.utils_scripts import create_toy_sample
+
+
+def main():
+    parser = parse_args()
+    args = parser.parse_args()
+
+    # device handling
+    if args.gpu and (args.gpu != '-1'):
+        device = 'cuda'
+        os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
+    else:
+        device = 'cpu'
+        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
+    # create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # load and set up model
+    model = vxm.networks.VxmDense.load(args.model, device)
+    model.to(device)
+    model.eval()
+
+    structures_dict = {0: 'backround',
+                       10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
+                       13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
+                       18: 'left_amygdala', 26: 'left_accumbens', 49: 'right_thalamus',
+                       50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
+                       53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
+
+    generator = create_data_generator(args, is_train=False)
+
+    df_DSC = pd.DataFrame(columns=["DSC", "im_pair", "structure", 'method'])
+    df_ASD = pd.DataFrame(columns=["ASD", "im_pair", "structure", 'method'])
+    df_HD = pd.DataFrame(columns=["HD", "im_pair", "structure", 'method'])
+    df_Jac = pd.DataFrame(columns=["count", 'percent', "im_pair", 'method'])
+
+    for i in range(args.num_test_imgs):
+        inputs, y_true = next(generator)
+        if not isinstance(inputs[0], torch.Tensor):
+            inputs = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in inputs]
+            y_true = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in y_true]
+        inputs = [t.to(device) for t in inputs]
+        y_true = [t.to(device) for t in y_true]
+
+        moving = inputs[0]
+        fixed = y_true[0]
+        moving_label = inputs[-1]
+        fixed_label = y_true[-1]
+
+        if args.use_toy:
+            toy = create_toy_sample(moving, mask=moving_label, method='noise', num_changes=5)
+
+        transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
+        resizer = vxm.layers.ResizeTransform(vel_resize=1 / args.target_spacing, ndims=3)
+        mask_values = list(structures_dict.keys())
+        if args.use_toy:
+            input_ = [toy, fixed, moving_label]
+        else:
+            input_ = [moving, fixed, moving_label]
+        with torch.no_grad():
+            dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs = \
+                calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
+                            y_true=[fixed_label], num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
+                            affine=np.eye(4), resize_module=resizer)
+            dice_score = dice_scores.mean(dim=0, keepdim=True)
+            hd_score = hd_scores.mean(dim=0, keepdim=True)
+            asd_score = asd_scores.mean(dim=0, keepdim=True)
+
+        df_DSC = add_to_data_frame(dice_scores, df_DSC, 'DSC', im_num=i, structures_dict=structures_dict, method=args.method)
+        df_HD = add_to_data_frame(hd_scores, df_HD, 'HD', im_num=i, structures_dict=structures_dict, method=args.method)
+        df_ASD = add_to_data_frame(asd_scores, df_ASD, 'ASD', im_num=i, structures_dict=structures_dict, method=args.method)
+
+
+        print('---------------------------------------')
+        print('stats')
+        print('---------------------------------------')
+        for i, (d, d_std, a, a_std) in enumerate(zip(dice_score.squeeze(), dice_std.squeeze(),
+                                                     asd_score.squeeze(), asd_std.squeeze())):
+            print(f'Dice, {structures_dict[int(mask_values[i])]}, {d}, {d_std}')
+            print(f'MSD, {structures_dict[int(mask_values[i])]}, {a}, {a_std}')
+
+        ddf_dir = os.path.join(args.output_dir, 'ddf/')
+        os.makedirs(ddf_dir, exist_ok=True)
+        j_count = []
+        j_ratio = []
+        for i, (ddf) in enumerate(dvfs):
+            jacob = vxm.py.utils.jacobian_determinant(
+                ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
+
+
+            print(f'jacob negative count, {jacob[jacob < 0].size}, sample, {i}')
+            print(f'jacob negative ratio, {jacob[jacob < 0].size / jacob.size}, sample, {i}')
+            j_count.append(jacob[jacob < 0].size)
+            j_ratio.append(jacob[jacob < 0].size / jacob.size)
+
+        n = args.num_statistics_runs
+        scores_dict = {'im_pair': [i] * n, "count": j_count, 'ration': j_ratio, 'method': [args.method] * n}
+        df_Jac = df_Jac.append(scores_dict, ignore_index=True)
+
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    df_Jac.to_csv(os.path.join(args.output_dir, 'jac.csv'))
+    df_DSC.to_csv(os.path.join(args.output_dir, 'dsc.csv'))
+    df_ASD.to_csv(os.path.join(args.output_dir, 'asd.csv'))
+    df_HD.to_csv(os.path.join(args.output_dir, 'hd.csv'))
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    # data organization parameters
+    parser.add_argument('datadir', help='base data directory')
+    parser.add_argument('--atlas', help='atlas filename (default: data/atlas_norm.npz)')
+    parser.add_argument('--model', required=True, help='pytorch model for nonlinear registration')
+    parser.add_argument('--multichannel', action='store_true', help='specify that data has multiple channels')
+    parser.add_argument("--output-dir", required=True, help="directory to dave the results")
+
+    # training parameters
+    parser.add_argument('--gpu', default='0', help='GPU ID number(s), comma-separated (default: 0)')
+    parser.add_argument('--batch-size', type=int, default=1, help='batch size (default: 1)')
+    parser.add_argument('--epochs', type=int, default=1500, help='number of training epochs (default: 1500)')
+    parser.add_argument('--steps-per-epoch', type=int, default=100, help='frequency of model saves (default: 100)')
+    parser.add_argument('--load-model', help='optional model file to initialize with')
+    parser.add_argument('--initial-epoch', type=int, default=0, help='initial epoch number (default: 0)')
+    parser.add_argument('--lr', type=float, default=1e-4, help='learning rate (default: 1e-4)')
+    parser.add_argument('--cudnn-nondet', action='store_true', help='disable cudnn determinism - might slow down training')
+
+    # network architecture parameters
+    parser.add_argument('--inshape', type=int, nargs='+', help='after cropping shape of input. default is equal to image size. specify if the input can\'t path through UNet')
+    parser.add_argument('--target-spacing', type=float, default=1, help='target spacing of the inputs to the network')
+    parser.add_argument('--final-spacing', type=float, default=2.43, help='final spacing of the saved images')
+
+    # loading and saving parameters
+    parser.add_argument('--loader-name', type=str, default='biobank', help='volume generator function to use')
+    parser.add_argument('--patient-list-src', type=str, default='/tmp/', help='directory to store patient list for training and testing')
+    parser.add_argument('--load-segmentation', action='store_true', default=False, help='use segmentation data for training the network (torch functionality seems to be missing)')
+    parser.add_argument('--num-statistics-runs', type=int, default=5, help='number of runs to get each statistic')
+    parser.add_argument('--num-test-imgs', type=int, default=10, help='number of test images to compare the results with previous one')
+
+    parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
+    parser.add_argument('--use-toy', action='store_true', help='create a toy example out of moving before registration')
+    parser.add_argument("--sampling-speed", action='store_true', help='measure the sampling through 10k runs')
+    parser.add_argument('--method', type=str, default='voxelmorph(baseline, SSD)', help='saved name in the csv file')
+    return parser
+
+
+def create_data_generator(args, is_train=True):
+    train_vol_names = args.datadir
+    # no need to append an extra feature axis if data is multichannel
+    add_feat_axis = not args.multichannel
+    if 'inshape' not in args:
+        args.inshape = None
+    if args.atlas:
+        generator = vxm.generators.scan_to_atlas_biobank(source_folder=train_vol_names, atlas=args.atlas,
+                                                         batch_size=args.batch_size,
+                                                         bidir=args.bidir, add_feat_axis=add_feat_axis,
+                                                         target_shape=args.inshape,
+                                                         return_segs=not is_train, target_spacing=args.target_spacing,
+                                                         patient_list_src=args.patient_list_src, is_train=is_train)
+        args.mask = next(generator)
+
+    else:
+        # scan-to-scan generator
+        return_segs = args.load_segmentation
+        if is_train is False:
+            # we want to compare segmentation in evaluation/test
+            return_segs = True
+        generator = vxm.generators.scan_to_scan(train_vol_names, batch_size=args.batch_size,
+                                                bidir=False, add_feat_axis=add_feat_axis,
+                                                loader_name=args.loader_name, target_shape=args.inshape,
+                                                return_segs=return_segs, target_spacing=args.target_spacing,
+                                                patient_list_src=args.patient_list_src, is_train=is_train)
+    return generator
+
+
+def add_to_data_frame(scores: torch.Tensor, df: pd.DataFrame, score_type: str, im_num: int, structures_dict, method: str):
+    n = scores.shape[0]
+    for i, (key) in enumerate(structures_dict):
+        if 'background' in structures_dict[key]:
+            continue
+        scores_dict = {score_type: scores[:, i].cpu().numpy(), 'im_pair': [im_num] * n,
+                       'structure': [structures_dict[key]] * n, 'method': [method] * n}
+        tmp_df = pd.DataFrame.from_dict(scores_dict)
+        df = df.append(tmp_df, ignore_index=True)
+    return df
+
+
+if __name__ == '__main__':
+    main()
