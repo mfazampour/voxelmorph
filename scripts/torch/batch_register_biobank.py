@@ -1,31 +1,23 @@
+#!/usr/bin/env python
+
 import os
 import argparse
-from datetime import datetime
+import sys
+import pathlib
 
 import numpy as np
 import pandas as pd
-import nibabel as nib
 import torch
-import torchio
-from torchio.transforms import (
-    RescaleIntensity,
-    Compose,
-    CropOrPad,
-    Resample
-)
-import SimpleITK as sitk
-# from tvtk.api import tvtk, write_data
 
-from monai.metrics import compute_meandice, compute_hausdorff_distance, compute_average_surface_distance
-
+sys.path.append(str(pathlib.Path(__file__).parent.parent.parent.absolute()))  # add vxm path
+sys.path.append(str(pathlib.Path(__file__).parent.parent.parent.absolute()
+                    / 'voxelmorph' / 'torch' / 'learnsim'))  # add learnsim path
 # import voxelmorph with pytorch backend
 os.environ['VXM_BACKEND'] = 'pytorch'
 import voxelmorph as vxm
-# from voxelmorph.generators import biobank_transform
 
 from scripts.torch.utils_scripts import calc_scores
 from scripts.torch.utils_scripts import create_toy_sample
-
 
 def main():
     parser = parse_args()
