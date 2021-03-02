@@ -22,6 +22,7 @@ from scripts.torch.utils_scripts import create_toy_sample
 def main():
     parser = parse_args()
     args = parser.parse_args()
+    args.affine = np.diag([*[args.target_spacing] * 3, 1])
 
     # device handling
     if args.gpu and (args.gpu != '-1'):
@@ -107,7 +108,7 @@ def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_
     dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs = \
         calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
                     y_true=[fixed_label], num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
-                    affine=np.eye(4), resize_module=resizer)
+                    affine=args.affine, resize_module=resizer)
     dice_score = dice_scores.mean(dim=0, keepdim=True)
     hd_score = hd_scores.mean(dim=0, keepdim=True)
     asd_score = asd_scores.mean(dim=0, keepdim=True)
