@@ -39,6 +39,9 @@ def main():
     model.to(device)
     model.eval()
 
+    transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
+    resizer = vxm.layers.ResizeTransform(vel_resize=1 / args.target_spacing, ndims=3)
+
     structures_dict = {0: 'backround',
                        10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
                        13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
@@ -53,68 +56,35 @@ def main():
     df_HD = pd.DataFrame(columns=["HD", "im_pair", "structure", 'method'])
     df_Jac = pd.DataFrame(columns=["count", 'percent', "im_pair", 'method'])
 
-    for i in range(args.num_test_imgs):
-        inputs, y_true = next(generator)
-        if not isinstance(inputs[0], torch.Tensor):
-            inputs = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in inputs]
-            y_true = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in y_true]
-        inputs = [t.to(device) for t in inputs]
-        y_true = [t.to(device) for t in y_true]
-
-        moving = inputs[0]
-        fixed = y_true[0]
-        moving_label = inputs[-1]
-        fixed_label = y_true[-1]
-
-        if args.use_toy:
-            toy = create_toy_sample(moving, mask=moving_label, method='noise', num_changes=5)
-
-        transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
-        resizer = vxm.layers.ResizeTransform(vel_resize=1 / args.target_spacing, ndims=3)
-        mask_values = list(structures_dict.keys())
-        if args.use_toy:
-            input_ = [toy, fixed, moving_label]
-        else:
-            input_ = [moving, fixed, moving_label]
-        with torch.no_grad():
-            dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs = \
-                calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
-                            y_true=[fixed_label], num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
-                            affine=np.eye(4), resize_module=resizer)
-            dice_score = dice_scores.mean(dim=0, keepdim=True)
-            hd_score = hd_scores.mean(dim=0, keepdim=True)
-            asd_score = asd_scores.mean(dim=0, keepdim=True)
-
-        df_DSC = add_to_data_frame(dice_scores, df_DSC, 'DSC', im_num=i, structures_dict=structures_dict, method=args.method)
-        df_HD = add_to_data_frame(hd_scores, df_HD, 'HD', im_num=i, structures_dict=structures_dict, method=args.method)
-        df_ASD = add_to_data_frame(asd_scores, df_ASD, 'ASD', im_num=i, structures_dict=structures_dict, method=args.method)
+    with torch.no_grad():
 
 
-        print('---------------------------------------')
-        print('stats')
-        print('---------------------------------------')
-        for i, (d, d_std, a, a_std) in enumerate(zip(dice_score.squeeze(), dice_std.squeeze(),
-                                                     asd_score.squeeze(), asd_std.squeeze())):
-            print(f'Dice, {structures_dict[int(mask_values[i])]}, {d}, {d_std}')
-            print(f'MSD, {structures_dict[int(mask_values[i])]}, {a}, {a_std}')
+        for i in range(args.num_test_imgs):
+            inputs, y_true = next(generator)
+            if not isinstance(inputs[0], torch.Tensor):
+                inputs = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in inputs]
+                y_true = [torch.from_numpy(d).float().permute(0, 4, 1, 2, 3) for d in y_true]
+            inputs = [t.to(device) for t in inputs]
+            y_true = [t.to(device) for t in y_true]
 
-        ddf_dir = os.path.join(args.output_dir, 'ddf/')
-        os.makedirs(ddf_dir, exist_ok=True)
-        j_count = []
-        j_ratio = []
-        for i, (ddf) in enumerate(dvfs):
-            jacob = vxm.py.utils.jacobian_determinant(
-                ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
+            moving = inputs[0]
+            fixed = y_true[0]
+            moving_label = inputs[-1]
+            fixed_label = y_true[-1]
 
+            if args.use_toy:
+                toy = create_toy_sample(moving, mask=moving_label, method='noise', num_changes=5)
 
-            print(f'jacob negative count, {jacob[jacob < 0].size}, sample, {i}')
-            print(f'jacob negative ratio, {jacob[jacob < 0].size / jacob.size}, sample, {i}')
-            j_count.append(jacob[jacob < 0].size)
-            j_ratio.append(jacob[jacob < 0].size / jacob.size)
+            mask_values = list(structures_dict.keys())
+            if args.use_toy:
+                input_ = [toy, fixed, moving_label]
+            else:
+                input_ = [moving, fixed, moving_label]
 
-        n = args.num_statistics_runs
-        scores_dict = {'im_pair': [i] * n, "count": j_count, 'ration': j_ratio, 'method': [args.method] * n}
-        df_Jac = df_Jac.append(scores_dict, ignore_index=True)
+            df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD,
+                                                      df_DSC, df_HD, df_Jac, i, resizer, structures_dict, transformer)
+
+            torch.cuda.empty_cache()
 
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -122,6 +92,45 @@ def main():
     df_DSC.to_csv(os.path.join(args.output_dir, 'dsc.csv'))
     df_ASD.to_csv(os.path.join(args.output_dir, 'asd.csv'))
     df_HD.to_csv(os.path.join(args.output_dir, 'hd.csv'))
+
+
+def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_DSC, df_HD, df_Jac, i, resizer,
+              structures_dict, transformer):
+    dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs = \
+        calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
+                    y_true=[fixed_label], num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
+                    affine=np.eye(4), resize_module=resizer)
+    dice_score = dice_scores.mean(dim=0, keepdim=True)
+    hd_score = hd_scores.mean(dim=0, keepdim=True)
+    asd_score = asd_scores.mean(dim=0, keepdim=True)
+    df_DSC = add_to_data_frame(dice_scores, df_DSC, 'DSC', im_num=i, structures_dict=structures_dict,
+                               method=args.method)
+    df_HD = add_to_data_frame(hd_scores, df_HD, 'HD', im_num=i, structures_dict=structures_dict, method=args.method)
+    df_ASD = add_to_data_frame(asd_scores, df_ASD, 'ASD', im_num=i, structures_dict=structures_dict, method=args.method)
+    print('---------------------------------------')
+    print('stats')
+    print('---------------------------------------')
+    for i, (d, d_std, a, a_std) in enumerate(zip(dice_score.squeeze(), dice_std.squeeze(),
+                                                 asd_score.squeeze(), asd_std.squeeze())):
+        print(f'Dice, {structures_dict[int(mask_values[i])]}, {d}, {d_std}')
+        print(f'MSD, {structures_dict[int(mask_values[i])]}, {a}, {a_std}')
+    ddf_dir = os.path.join(args.output_dir, 'ddf/')
+    os.makedirs(ddf_dir, exist_ok=True)
+    j_count = []
+    j_ratio = []
+    for i, (ddf) in enumerate(dvfs):
+        jacob = vxm.py.utils.jacobian_determinant(
+            ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
+        c = jacob[jacob < 0].size
+        r = c / jacob.size
+        print(f'jacob negative count, {c}, sample, {i}')
+        print(f'jacob negative ratio, {r}, sample, {i}')
+        j_count.append(c)
+        j_ratio.append(r)
+    n = args.num_statistics_runs
+    scores_dict = {'im_pair': [i] * n, "count": j_count, 'ration': j_ratio, 'method': [args.method] * n}
+    df_Jac = df_Jac.append(scores_dict, ignore_index=True)
+    return df_ASD, df_DSC, df_HD, df_Jac
 
 
 def parse_args():
@@ -172,7 +181,7 @@ def create_data_generator(args, is_train=True):
     if args.atlas:
         generator = vxm.generators.scan_to_atlas_biobank(source_folder=train_vol_names, atlas=args.atlas,
                                                          batch_size=args.batch_size,
-                                                         bidir=args.bidir, add_feat_axis=add_feat_axis,
+                                                         bidir=False, add_feat_axis=add_feat_axis,
                                                          target_shape=args.inshape,
                                                          return_segs=not is_train, target_spacing=args.target_spacing,
                                                          patient_list_src=args.patient_list_src, is_train=is_train)
