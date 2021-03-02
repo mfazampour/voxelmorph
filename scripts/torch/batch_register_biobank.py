@@ -35,9 +35,13 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     # load and set up model
-    model = vxm.networks.VxmDense.load(args.model, device)
-    model.to(device)
-    model.eval()
+    model_base = vxm.networks.VxmDense.load(args.model_base, device)
+    model_base.to(device)
+    model_base.eval()
+
+    model_test = vxm.networks.VxmDense.load(args.model_test, device)
+    model_test.to(device)
+    model_test.eval()
 
     transformer = vxm.layers.SpatialTransformer(size=args.inshape, mode='nearest').to(device)
     resizer = vxm.layers.ResizeTransform(vel_resize=1 / args.target_spacing, ndims=3)
@@ -54,11 +58,10 @@ def main():
     df_DSC = pd.DataFrame(columns=["DSC", "im_pair", "structure", 'method'])
     df_ASD = pd.DataFrame(columns=["ASD", "im_pair", "structure", 'method'])
     df_HD = pd.DataFrame(columns=["HD", "im_pair", "structure", 'method'])
-    df_Jac = pd.DataFrame(columns=["count", 'percent', "im_pair", 'method'])
+    df_Jac = pd.DataFrame(columns=["count", 'ratio', "im_pair", 'method'])
+
 
     with torch.no_grad():
-
-
         for i in range(args.num_test_imgs):
             inputs, y_true = next(generator)
             if not isinstance(inputs[0], torch.Tensor):
@@ -81,8 +84,13 @@ def main():
             else:
                 input_ = [moving, fixed, moving_label]
 
-            df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD,
-                                                      df_DSC, df_HD, df_Jac, i, resizer, structures_dict, transformer)
+            df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model_base, args, device, df_ASD,
+                                                      df_DSC, df_HD, df_Jac, i, resizer, structures_dict,
+                                                      transformer, args.method_base)
+
+            df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model_test, args, device,
+                                                      df_ASD, df_DSC, df_HD, df_Jac, i, resizer, structures_dict,
+                                                      transformer, args.method_test)
 
             torch.cuda.empty_cache()
 
@@ -95,7 +103,7 @@ def main():
 
 
 def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_DSC, df_HD, df_Jac, i, resizer,
-              structures_dict, transformer):
+              structures_dict, transformer, method):
     dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs = \
         calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
                     y_true=[fixed_label], num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
@@ -103,10 +111,9 @@ def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_
     dice_score = dice_scores.mean(dim=0, keepdim=True)
     hd_score = hd_scores.mean(dim=0, keepdim=True)
     asd_score = asd_scores.mean(dim=0, keepdim=True)
-    df_DSC = add_to_data_frame(dice_scores, df_DSC, 'DSC', im_num=i, structures_dict=structures_dict,
-                               method=args.method)
-    df_HD = add_to_data_frame(hd_scores, df_HD, 'HD', im_num=i, structures_dict=structures_dict, method=args.method)
-    df_ASD = add_to_data_frame(asd_scores, df_ASD, 'ASD', im_num=i, structures_dict=structures_dict, method=args.method)
+    df_DSC = add_to_data_frame(dice_scores.cpu(), df_DSC, 'DSC', im_num=i, structures_dict=structures_dict, method=method)
+    df_HD = add_to_data_frame(hd_scores.cpu(), df_HD, 'HD', im_num=i, structures_dict=structures_dict, method=method)
+    df_ASD = add_to_data_frame(asd_scores.cpu(), df_ASD, 'ASD', im_num=i, structures_dict=structures_dict, method=method)
     print('---------------------------------------')
     print('stats')
     print('---------------------------------------')
@@ -114,8 +121,7 @@ def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_
                                                  asd_score.squeeze(), asd_std.squeeze())):
         print(f'Dice, {structures_dict[int(mask_values[i])]}, {d}, {d_std}')
         print(f'MSD, {structures_dict[int(mask_values[i])]}, {a}, {a_std}')
-    ddf_dir = os.path.join(args.output_dir, 'ddf/')
-    os.makedirs(ddf_dir, exist_ok=True)
+
     j_count = []
     j_ratio = []
     for i, (ddf) in enumerate(dvfs):
@@ -128,8 +134,9 @@ def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_
         j_count.append(c)
         j_ratio.append(r)
     n = args.num_statistics_runs
-    scores_dict = {'im_pair': [i] * n, "count": j_count, 'ration': j_ratio, 'method': [args.method] * n}
-    df_Jac = df_Jac.append(scores_dict, ignore_index=True)
+    scores_dict = {'im_pair': [i] * n, "count": j_count, 'ratio': j_ratio, 'method': [method] * n}
+    tmp_df = pd.DataFrame.from_dict(scores_dict)
+    df_Jac = df_Jac.append(tmp_df, ignore_index=True)
     return df_ASD, df_DSC, df_HD, df_Jac
 
 
@@ -139,7 +146,8 @@ def parse_args():
     # data organization parameters
     parser.add_argument('datadir', help='base data directory')
     parser.add_argument('--atlas', help='atlas filename (default: data/atlas_norm.npz)')
-    parser.add_argument('--model', required=True, help='pytorch model for nonlinear registration')
+    parser.add_argument('--model-base', required=True, help='baseline model for nonlinear registration')
+    parser.add_argument('--model-test', required=True, help='test model for nonlinear registration')
     parser.add_argument('--multichannel', action='store_true', help='specify that data has multiple channels')
     parser.add_argument("--output-dir", required=True, help="directory to dave the results")
 
@@ -168,7 +176,8 @@ def parse_args():
     parser.add_argument('--use-probs', action='store_true', help='enable probabilities')
     parser.add_argument('--use-toy', action='store_true', help='create a toy example out of moving before registration')
     parser.add_argument("--sampling-speed", action='store_true', help='measure the sampling through 10k runs')
-    parser.add_argument('--method', type=str, default='voxelmorph(baseline, SSD)', help='saved name in the csv file')
+    parser.add_argument('--method-base', type=str, default='voxelmorph(baseline, SSD)', help='saved name in the csv file')
+    parser.add_argument('--method-test', type=str, default='voxelmorph(learnt)', help='saved name in the csv file')
     return parser
 
 
@@ -206,7 +215,7 @@ def add_to_data_frame(scores: torch.Tensor, df: pd.DataFrame, score_type: str, i
     for i, (key) in enumerate(structures_dict):
         if 'background' in structures_dict[key]:
             continue
-        scores_dict = {score_type: scores[:, i].cpu().numpy(), 'im_pair': [im_num] * n,
+        scores_dict = {score_type: scores[:, i].numpy(), 'im_pair': [im_num] * n,
                        'structure': [structures_dict[key]] * n, 'method': [method] * n}
         tmp_df = pd.DataFrame.from_dict(scores_dict)
         df = df.append(tmp_df, ignore_index=True)
