@@ -4,6 +4,7 @@ import os
 import argparse
 import sys
 import pathlib
+import time
 
 import numpy as np
 import pandas as pd
@@ -18,6 +19,7 @@ import voxelmorph as vxm
 
 from scripts.torch.utils_scripts import calc_scores
 from scripts.torch.utils_scripts import create_toy_sample
+from scripts.torch.utils_scripts import apply_model
 
 def main():
     parser = parse_args()
@@ -56,10 +58,14 @@ def main():
 
     generator = create_data_generator(args, is_train=False)
 
-    df_DSC = pd.DataFrame(columns=["DSC", "im_pair", "structure", 'method'])
-    df_ASD = pd.DataFrame(columns=["ASD", "im_pair", "structure", 'method'])
-    df_HD = pd.DataFrame(columns=["HD", "im_pair", "structure", 'method'])
-    df_Jac = pd.DataFrame(columns=["count", 'ratio', "im_pair", 'method'])
+    if args.registration_speed:
+        base_reg_time = 0
+        test_reg_time = 0
+    else:
+        df_DSC = pd.DataFrame(columns=["DSC", "im_pair", "structure", 'method'])
+        df_ASD = pd.DataFrame(columns=["ASD", "im_pair", "structure", 'method'])
+        df_HD = pd.DataFrame(columns=["HD", "im_pair", "structure", 'method'])
+        df_Jac = pd.DataFrame(columns=["count", 'ratio', "im_pair", 'method'])
 
 
     with torch.no_grad():
@@ -85,22 +91,35 @@ def main():
             else:
                 input_ = [moving, fixed, moving_label]
 
-            df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model_base, args, device, df_ASD,
-                                                      df_DSC, df_HD, df_Jac, im_num, resizer, structures_dict,
-                                                      transformer, args.method_base)
+            if args.registration_speed:
+                start = time.time_ns()
+                apply_model(model_base, generator=None, inputs=input_, y_true=[fixed_label],
+                                             device=device, losses=None, is_test=True, has_seg=True)
+                base_reg_time += time.time_ns() - start
+                start = time.time_ns()
+                apply_model(model_test, generator=None, inputs=input_, y_true=[fixed_label],
+                            device=device, losses=None, is_test=True, has_seg=True)
+                test_reg_time += time.time_ns() - start
+            else:
+                df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model_base, args, device, df_ASD,
+                                                          df_DSC, df_HD, df_Jac, im_num, resizer, structures_dict,
+                                                          transformer, args.method_base)
 
-            df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model_test, args, device,
-                                                      df_ASD, df_DSC, df_HD, df_Jac, im_num, resizer, structures_dict,
-                                                      transformer, args.method_test)
+                df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model_test, args, device,
+                                                          df_ASD, df_DSC, df_HD, df_Jac, im_num, resizer, structures_dict,
+                                                          transformer, args.method_test)
 
             torch.cuda.empty_cache()
 
-
-    os.makedirs(args.output_dir, exist_ok=True)
-    df_Jac.to_csv(os.path.join(args.output_dir, 'jac.csv'))
-    df_DSC.to_csv(os.path.join(args.output_dir, 'dsc.csv'))
-    df_ASD.to_csv(os.path.join(args.output_dir, 'asd.csv'))
-    df_HD.to_csv(os.path.join(args.output_dir, 'hd.csv'))
+    if args.registration_speed:
+        print(f'base model takes {base_reg_time/args.num_test_imgs/1e6} ms per image')
+        print(f'test model takes {test_reg_time / args.num_test_imgs/1e6} ms per image')
+    else:
+        os.makedirs(args.output_dir, exist_ok=True)
+        df_Jac.to_csv(os.path.join(args.output_dir, 'jac.csv'))
+        df_DSC.to_csv(os.path.join(args.output_dir, 'dsc.csv'))
+        df_ASD.to_csv(os.path.join(args.output_dir, 'asd.csv'))
+        df_HD.to_csv(os.path.join(args.output_dir, 'hd.csv'))
 
 
 def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_DSC, df_HD, df_Jac, im_num, resizer,
@@ -179,6 +198,7 @@ def parse_args():
     parser.add_argument("--sampling-speed", action='store_true', help='measure the sampling through 10k runs')
     parser.add_argument('--method-base', type=str, default='voxelmorph(baseline, SSD)', help='saved name in the csv file')
     parser.add_argument('--method-test', type=str, default='voxelmorph(learnt)', help='saved name in the csv file')
+    parser.add_argument('--registration-speed', action='store_true', default=False, help='compare speed of registration')
     return parser
 
 
