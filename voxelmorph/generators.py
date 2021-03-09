@@ -81,21 +81,33 @@ def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True,
     transform_seg = biobank_transform(target_shape, target_spacing=target_spacing, min_value=None)
 
     while True:
+        while True:  # try catch loop for the error in reading the data
+            vols = read_vol_biobank(batch_size, np_var, resize_factor, return_segs, seg_names, transform, transform_seg,
+                                    vol_names)
+            if vols is not None:
+                break
+
+        yield tuple(vols)
+
+
+def read_vol_biobank(batch_size, np_var, resize_factor, return_segs, seg_names, transform, transform_seg, vol_names):
+    try:
         # generate [batchsize] random image indices
         indices = np.random.randint(len(vol_names), size=batch_size)
-
         # load volumes and concatenate
         load_params = dict(np_var=np_var, add_batch_axis=True, add_feat_axis=False, pad_shape=None,
                            resize_factor=resize_factor)
         imgs = [np.expand_dims(transform(py.utils.load_volfile(vol_names[i], **load_params)), axis=-1) for i in indices]
         vols = [np.concatenate(imgs, axis=0)]
-
         # optionally load segmentations and concatenate
         if return_segs:
-            segs = [transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(seg_names[i], **load_params))).data.unsqueeze(dim=-1) for i in indices]
+            segs = [
+                transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(seg_names[i], **load_params))).data.unsqueeze(
+                    dim=-1) for i in indices]
             vols.append(np.concatenate(segs, axis=0))
-
-        yield tuple(vols)
+        return vols
+    except:
+        return None
 
 
 def prostate_transforms(min_size, input_size):

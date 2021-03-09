@@ -112,8 +112,8 @@ def main():
             torch.cuda.empty_cache()
 
     if args.registration_speed:
-        print(f'base model takes {base_reg_time/args.num_test_imgs/1e6} ms per image')
-        print(f'test model takes {test_reg_time / args.num_test_imgs/1e6} ms per image')
+        print(f'{args.method_base} takes {base_reg_time/args.num_test_imgs/1e6} ms per image')
+        print(f'{args.method_test} takes {test_reg_time / args.num_test_imgs/1e6} ms per image')
     else:
         os.makedirs(args.output_dir, exist_ok=True)
         df_Jac.to_csv(os.path.join(args.output_dir, 'jac.csv'))
