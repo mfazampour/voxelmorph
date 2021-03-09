@@ -150,8 +150,8 @@ def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_
             ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
         c = jacob[jacob < 0].size
         r = c / jacob.size
-        print(f'jacob negative count, {c}, sample, {i}')
-        print(f'jacob negative ratio, {r}, sample, {i}')
+        # print(f'jacob negative count, {c}, sample, {i}')
+        # print(f'jacob negative ratio, {r}, sample, {i}')
         j_count.append(c)
         j_ratio.append(r)
     n = args.num_statistics_runs
