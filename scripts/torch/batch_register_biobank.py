@@ -101,6 +101,7 @@ def main():
                             device=device, losses=None, is_test=True, has_seg=True)
                 test_reg_time += time.time_ns() - start
             else:
+                start = time.time()
                 df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model_base, args, device, df_ASD,
                                                           df_DSC, df_HD, df_Jac, im_num, resizer, structures_dict,
                                                           transformer, args.method_base)
@@ -108,7 +109,7 @@ def main():
                 df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model_test, args, device,
                                                           df_ASD, df_DSC, df_HD, df_Jac, im_num, resizer, structures_dict,
                                                           transformer, args.method_test)
-
+                print(f'processed sample {im_num}/{args.num_test_imgs} in {time.time()-start} seconds')
             torch.cuda.empty_cache()
 
     if args.registration_speed:
@@ -134,13 +135,13 @@ def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_
     df_DSC = add_to_data_frame(dice_scores.cpu(), df_DSC, 'DSC', im_num=im_num, structures_dict=structures_dict, method=method)
     df_HD = add_to_data_frame(hd_scores.cpu(), df_HD, 'HD', im_num=im_num, structures_dict=structures_dict, method=method)
     df_ASD = add_to_data_frame(asd_scores.cpu(), df_ASD, 'ASD', im_num=im_num, structures_dict=structures_dict, method=method)
-    print('---------------------------------------')
-    print('stats')
-    print('---------------------------------------')
-    for i, (d, d_std, a, a_std) in enumerate(zip(dice_score.squeeze(), dice_std.squeeze(),
-                                                 asd_score.squeeze(), asd_std.squeeze())):
-        print(f'Dice, {structures_dict[int(mask_values[i])]}, {d}, {d_std}')
-        print(f'MSD, {structures_dict[int(mask_values[i])]}, {a}, {a_std}')
+    # print('---------------------------------------')
+    # print('stats')
+    # print('---------------------------------------')
+    # for i, (d, d_std, a, a_std) in enumerate(zip(dice_score.squeeze(), dice_std.squeeze(),
+    #                                              asd_score.squeeze(), asd_std.squeeze())):
+    #     print(f'Dice, {structures_dict[int(mask_values[i])]}, {d}, {d_std}')
+    #     print(f'MSD, {structures_dict[int(mask_values[i])]}, {a}, {a_std}')
 
     j_count = []
     j_ratio = []
