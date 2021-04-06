@@ -118,6 +118,7 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument('--kl-lambda', type=float, default=10, help='prior lambda regularization for KL loss (default: 10)')
     parser.add_argument('--flow-logsigma-bias', type=float, default=-10, help='negative value for initialization of the logsigma layer bias value')
     parser.add_argument('--sim_model_path', type=str, metavar='PATH', help='path to the checkpoint file for learned sim')
+    parser.add_argument('--reduction', type=str, default='mean', help='type of reduction used for learn-sim and KL', choices=['sum', 'mean'])
 
     # loading and saving parameters
     parser.add_argument('--log-dir', type=str, default=None, help='folder for tensorboard logs')
@@ -173,7 +174,8 @@ def create_data_generator(args, is_train=True):
             generator = vxm.generators.scan_to_atlas_biobank(source_folder=train_vol_names, atlas=args.atlas, batch_size=args.batch_size,
                                                 bidir=args.bidir, add_feat_axis=add_feat_axis, target_shape=args.inshape,
                                                 return_segs=not is_train, target_spacing=args.target_spacing,
-                                                patient_list_src=args.patient_list_src, is_train=True)
+                                                patient_list_src=args.patient_list_src, is_train=is_train)
+            args.mask = next(generator)
         else:
             # scan-to-atlas generator
             atlas = vxm.py.utils.load_volfile(args.atlas, np_var='vol', add_batch_axis=True, add_feat_axis=add_feat_axis)
@@ -239,7 +241,9 @@ def create_optimizers(args, bidir, model, device):
     elif args.image_loss == 'mind':
         image_loss_func = vxm.losses.MIND().loss
     elif args.image_loss == 'learnsim':
-        image_loss = vxm.losses.LearnedSim(checkpoint_path=args.sim_model_path, device=device)
+        mask = args.mask if hasattr(args, 'mask') else None
+        image_loss = vxm.losses.LearnedSim(checkpoint_path=args.sim_model_path,
+                                                device=device, reduction=args.reduction, mask=mask)
         image_loss_func = image_loss.loss
         args.image_loss = image_loss.type
     elif args.image_loss == 'lcc':
@@ -249,16 +253,15 @@ def create_optimizers(args, bidir, model, device):
     # need two image loss functions if bidirectional
     if bidir:
         losses = [image_loss_func, image_loss_func]
-        loss_names += [args.image_loss, args.image_loss]
         weights = [0.5, 0.5]
     else:
         losses = [image_loss_func]
-        loss_names += [args.image_loss]
         weights = [1]
+    loss_names += [args.image_loss]
 
     # prepare deformation loss
     if args.use_probs:
-        losses += [vxm.losses.KL(args.kl_lambda).loss]
+        losses += [vxm.losses.KL(args.kl_lambda, reduction=args.reduction).loss]
         loss_names += ['KL']
     else:
         losses += [vxm.losses.Grad('l2', loss_mult=args.int_downsize).loss]
@@ -311,13 +314,13 @@ def train(args: argparse.Namespace, device, generator, losses, model, model_dir,
                     log_sigma = None
                     mean = None
                 if args.bidir:
-                    loss_names = [loss_names[0], *loss_names[2:]]
                     loss_list = [str(float(loss_list[0])+float(loss_list[1])), *loss_list[2:]]
                 tensorboard_log(model, test_generator, loss_names, device, loss_list, writer, ssim=ssim,
                                 log_sigma=log_sigma, mean=mean, global_step=global_step)
                 evaluate_with_segmentation(model, test_generator, device=device, args=args, writer=writer,
                                            global_step=global_step, transformer=transformer,
                                            calc_statistics=calc_statistics)
+                plt.close("all")
                 model.train()
         torch.cuda.empty_cache()
     # final model save
@@ -335,9 +338,10 @@ def tensorboard_log(model, test_generator, loss_names, device, loss_list,
     figure = vxm.torch.utils.create_figure(y_true[0].cpu(), inputs[0].cpu(), y_pred.cpu(),
                                            jacob=torch.tensor(jacob).view_as(y_true[0]),
                                            deformation=ddf.cpu(), log_sigma=log_sigma, mean=mean)
-    writer.add_figure(tag='volumes',
-                      figure=figure,
-                      global_step=global_step)
+    writer.add_figure(tag='volumes', figure=figure, global_step=global_step, close=False)
+    figure.clf()
+    plt.close(figure)
+
     for name, value in zip(loss_names, list(map(float, loss_list))):
         writer.add_scalar(f'loss/{name}', value, global_step=global_step)
 
@@ -411,9 +415,9 @@ def evaluate_with_segmentation(model, test_generator, device, args: argparse.Nam
     if len(seg_maps) > 0:
         seg_maps = seg_maps[0]
         figure = vxm.torch.utils.create_seg_figure(*seg_maps)
-        writer.add_figure(tag='seg_maps',
-                          figure=figure,
-                          global_step=global_step)
+        writer.add_figure(tag='seg_maps', figure=figure, global_step=global_step, close=False)
+        figure.clf()
+        plt.close(figure)
 
     if calc_statistics:
         log_statistics(torch.cat(list_hd_std), structures_dict.values(), writer=writer,
@@ -436,13 +440,13 @@ def log_statistics(scores_std: torch.Tensor, labels, writer: SummaryWriter, titl
 
 
 def log_input_params(args: argparse.Namespace, writer: SummaryWriter):
-    cell_data = [[key, f'{value}'] for key, value in zip(vars(args).keys(), vars(args).values())]
-    fig, ax = plt.subplots(1, 1)
-    ax.table(cellText=cell_data,
-             loc='center')
-    fig.set_size_inches(6, 8)
-    ax.set_axis_off()
-    writer.add_figure('Params', fig)
+    # cell_data = [[key, f'{value}'] for key, value in zip(vars(args).keys(), vars(args).values())]
+    # fig, ax = plt.subplots(1, 1)
+    # ax.table(cellText=cell_data,
+    #          loc='center')
+    # fig.set_size_inches(6, 8)
+    # ax.set_axis_off()
+    # writer.add_figure('Params', fig)
     param_text = "\n\n".join(["{key:<20}:{value:>40}".format(key=key, value=f'{value}')
                               for key, value in zip(vars(args).keys(), vars(args).values())])
     writer.add_text('params', param_text)

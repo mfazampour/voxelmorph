@@ -81,21 +81,33 @@ def volgen_biobank(patient_list_src: str, source_folder: str, is_train=True,
     transform_seg = biobank_transform(target_shape, target_spacing=target_spacing, min_value=None)
 
     while True:
+        while True:  # try catch loop for the error in reading the data
+            vols = read_vol_biobank(batch_size, np_var, resize_factor, return_segs, seg_names, transform, transform_seg,
+                                    vol_names)
+            if vols is not None:
+                break
+
+        yield tuple(vols)
+
+
+def read_vol_biobank(batch_size, np_var, resize_factor, return_segs, seg_names, transform, transform_seg, vol_names):
+    try:
         # generate [batchsize] random image indices
         indices = np.random.randint(len(vol_names), size=batch_size)
-
         # load volumes and concatenate
         load_params = dict(np_var=np_var, add_batch_axis=True, add_feat_axis=False, pad_shape=None,
                            resize_factor=resize_factor)
         imgs = [np.expand_dims(transform(py.utils.load_volfile(vol_names[i], **load_params)), axis=-1) for i in indices]
         vols = [np.concatenate(imgs, axis=0)]
-
         # optionally load segmentations and concatenate
         if return_segs:
-            segs = [transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(seg_names[i], **load_params))).data.unsqueeze(dim=-1) for i in indices]
+            segs = [
+                transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(seg_names[i], **load_params))).data.unsqueeze(
+                    dim=-1) for i in indices]
             vols.append(np.concatenate(segs, axis=0))
-
-        yield tuple(vols)
+        return vols
+    except:
+        return None
 
 
 def prostate_transforms(min_size, input_size):
@@ -316,8 +328,9 @@ def scan_to_atlas_biobank(source_folder, atlas: str, patient_list_src: str, is_t
                          target_shape=target_shape, target_spacing=target_spacing, resize_factor=resize_factor, is_train=is_train,
                          **kwargs)
 
+    # read atlas
     vol_names, seg_names = load_vol_pathes(patient_list_src, source_folder, img_pattern=img_pattern,
-                                           seg_pattern=seg_pattern, is_train=is_train)
+                                           seg_pattern=seg_pattern, is_train=True)  # atlas is in training set
 
     transform = biobank_transform(target_shape, target_spacing=target_spacing)
     transform_seg = biobank_transform(target_shape, target_spacing=target_spacing, min_value=None)
@@ -326,29 +339,33 @@ def scan_to_atlas_biobank(source_folder, atlas: str, patient_list_src: str, is_t
     path = [p for p in vol_names if atlas in p][0]
     atlas_img = np.expand_dims(transform(py.utils.load_volfile(path, **load_params)), axis=-1)
     path = [p for p in seg_names if atlas in p][0]
-    seg_a = transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(path, **load_params))).data.unsqueeze(dim=-1).numpy()
+    seg_atlas = transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(path, **load_params))).data.unsqueeze(dim=-1).numpy()
 
-    atlas = atlas_img
-    shape = atlas.shape[1:-1]
+    # read atlas mask
+    path = os.path.join(Path(path).parent, 'T1_brain_mask_affine_to_mni.nii.gz')
+    mask_atlas = transform_seg(torchio.LabelMap(tensor=py.utils.load_volfile(path, **load_params))).data.unsqueeze(dim=1).bool()
+    yield mask_atlas
+
+    shape = atlas_img.shape[1:-1]
     zeros = np.zeros((batch_size, *shape, len(shape)))
 
     while True:
-        seg_d = None
+        seg_scan = None
 
         data1 = next(gen)
         scan = data1[0]
 
         if return_segs:
-            seg_d = data1[1]
+            seg_scan = data1[1]
 
-        invols = [scan, atlas]
-        outvols = [atlas, scan] if bidir else [atlas]
+        invols = [scan, atlas_img]
+        outvols = [atlas_img, scan] if bidir else [atlas_img]
         if not no_warp:
             outvols.append(zeros)
 
-        if seg_d is not None:
-            invols.append(seg_a)
-            outvols.append(seg_d)
+        if seg_scan is not None:
+            invols.append(seg_scan)
+            outvols.append(seg_atlas)
 
         yield (invols, outvols)
 

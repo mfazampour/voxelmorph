@@ -276,9 +276,10 @@ class KL:
     Kullback–Leibler divergence for probabilistic flows.
     """
 
-    def __init__(self, prior_lambda):
+    def __init__(self, prior_lambda, reduction='mean'):
         self.prior_lambda = prior_lambda
         self.D = None
+        self.reduction = reduction
 
     def _adj_filt(self, ndims):
         """
@@ -339,7 +340,12 @@ class KL:
             r = [d, *range(d), *range(d + 1, ndims + 2)]
             y = y_pred.permute([0, *range(2, ndims + 2), 1]).permute(r)  # first change to TF convention then perm
             df = y[1:, ...] - y[:-1, ...]
-            sm += (df * df).mean()
+            if self.reduction == 'mean':
+                sm += (df * df).mean()
+            elif self.reduction == 'sum':
+                sm += (df * df).sum()
+            else:
+                raise NotImplementedError("only mean and sum is defined")
 
         return 0.5 * sm / ndims
 
@@ -368,7 +374,13 @@ class KL:
 
             # sigma terms
             sigma_term = self.prior_lambda * self.D * torch.exp(log_sigma) - log_sigma
-            sigma_term = sigma_term.mean()
+            if self.reduction == 'mean':
+                sigma_term = sigma_term.mean()
+            elif self.reduction == 'sum':
+                sigma_term = sigma_term.sum()
+            else:
+                raise NotImplementedError("only mean and sum is defined")
+
 
             # precision terms
             # note needs 0.5 twice, one here (inside self.prec_loss), one below
@@ -380,7 +392,7 @@ class KL:
 
 
 class LearnedSim:
-    def __init__(self, checkpoint_path: str, device='cuda', reduction='mean'):
+    def __init__(self, checkpoint_path: str, device='cuda', reduction='mean', mask: torch.Tensor = None):
         config = torch.load(checkpoint_path)['config']
         model = torch.load(checkpoint_path)['model']
         type = config.config['model']['type']
@@ -395,10 +407,11 @@ class LearnedSim:
             raise NotImplementedError(f'learnsim model type {type} not supported')
         # self.model = torch.nn.DataParallel(self.model)
         self.model.load_state_dict(model)
-        self.model.to(device)
+        self.model = self.model.to(device)
         self.set_requires_grad(False)
 
         self.reduction = reduction
+        self.mask = mask.to(device) if mask is not None else None
         self.type = type
 
     def set_requires_grad(self, requires_grad=False):
@@ -410,18 +423,18 @@ class LearnedSim:
             param.requires_grad = requires_grad
 
     def change_range(self, y: torch.Tensor):
-        y = (y - y.min())/(y.max() - y.min())  # map to [0 1] if not already
-        return y * 2 - 1
+        eps = 1e-5
+        y_ = (y - y.min())/(y.max() - y.min() + eps)  # map to [0 1] if not already
+        return y_ * 2 - 1
 
     def loss(self, y_true: torch.Tensor, y_pred: torch.Tensor):
-        mse = F.mse_loss(y_true.detach(), y_pred.detach())
-        y_true = self.change_range(y_true)
-        y_pred = self.change_range(y_pred)
-        t = self.model.forward(y_true, y_pred, mask=y_true.detach() > 0)
+        y_true_ = self.change_range(y_true)
+        y_pred_ = self.change_range(y_pred)
+        mask_ = self.mask if self.mask is not None else y_true_.detach() > -0.95
+        t = self.model.forward(y_true_, y_pred_, mask=mask_)
         if self.reduction == 'sum':
             return t.sum()
-        elif self.reduction == 'mean':
-            print(f'mse is {mse}, learn sim is {t.mean().item()}')
+        elif self.reduction == 'mean':            
             return t.mean()
         else:
             raise NotImplementedError("only mean and sum is defined")
