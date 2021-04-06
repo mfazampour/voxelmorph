@@ -239,7 +239,9 @@ def create_optimizers(args, bidir, model, device):
     elif args.image_loss == 'mind':
         image_loss_func = vxm.losses.MIND().loss
     elif args.image_loss == 'learnsim':
-        image_loss_func = vxm.losses.LearnedSim(checkpoint_path=args.sim_model_path, device=device).loss
+        image_loss = vxm.losses.LearnedSim(checkpoint_path=args.sim_model_path, device=device)
+        image_loss_func = image_loss.loss
+        args.image_loss = image_loss.type
     elif args.image_loss == 'lcc':
         image_loss_func = vxm.losses.LCC(s=4, device=device).loss
     else:

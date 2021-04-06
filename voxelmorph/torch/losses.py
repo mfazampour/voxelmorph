@@ -9,6 +9,7 @@ from torch.autograd import Variable
 
 try:
     from .learnsim.model.model import CNN_SSD
+    from .learnsim.model.model import CNN_LCC
 except:
     print("failed to load learn sim model")
 
@@ -382,16 +383,23 @@ class LearnedSim:
     def __init__(self, checkpoint_path: str, device='cuda', reduction='mean'):
         config = torch.load(checkpoint_path)['config']
         model = torch.load(checkpoint_path)['model']
-        s = config.config['model']['args']['s']
-        no_feature_maps = config.config['model']['args']['no_feature_maps']
+        type = config.config['model']['type']
+        no_features = config.config['model']['args']['no_features']
         learnable = config.config['model']['args']['learnable']
-        self.model = CNN_SSD(learnable=learnable, s=s, no_feature_maps=no_feature_maps)
-        self.model = torch.nn.DataParallel(self.model)
+        if type == 'CNN_SSD':
+            self.model = CNN_SSD(learnable=learnable, no_features=no_features)
+        elif type == 'CNN_LCC':
+            s = config.config['model']['args']['s']
+            self.model = CNN_LCC(learnable=learnable, s=s, no_features=no_features)
+        else:
+            raise NotImplementedError(f'learnsim model type {type} not supported')
+        # self.model = torch.nn.DataParallel(self.model)
         self.model.load_state_dict(model)
         self.model.to(device)
         self.set_requires_grad(False)
 
         self.reduction = reduction
+        self.type = type
 
     def set_requires_grad(self, requires_grad=False):
         """Set requies_grad=Fasle to avoid updating the metric during vxm training
@@ -406,12 +414,14 @@ class LearnedSim:
         return y * 2 - 1
 
     def loss(self, y_true: torch.Tensor, y_pred: torch.Tensor):
+        mse = F.mse_loss(y_true.detach(), y_pred.detach())
         y_true = self.change_range(y_true)
         y_pred = self.change_range(y_pred)
         t = self.model.forward(y_true, y_pred, mask=y_true.detach() > 0)
         if self.reduction == 'sum':
             return t.sum()
         elif self.reduction == 'mean':
+            print(f'mse is {mse}, learn sim is {t.mean().item()}')
             return t.mean()
         else:
             raise NotImplementedError("only mean and sum is defined")
