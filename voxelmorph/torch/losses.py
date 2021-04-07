@@ -400,9 +400,11 @@ class LearnedSim:
         learnable = config.config['model']['args']['learnable']
         if type == 'CNN_SSD':
             self.model = CNN_SSD(learnable=learnable, no_features=no_features)
+            self.coeff = 1
         elif type == 'CNN_LCC':
             s = config.config['model']['args']['s']
             self.model = CNN_LCC(learnable=learnable, s=s, no_features=no_features)
+            self.coeff = -1
         else:
             raise NotImplementedError(f'learnsim model type {type} not supported')
         # self.model = torch.nn.DataParallel(self.model)
@@ -413,6 +415,7 @@ class LearnedSim:
         self.reduction = reduction
         self.mask = mask.to(device) if mask is not None else None
         self.type = type
+
 
     def set_requires_grad(self, requires_grad=False):
         """Set requies_grad=Fasle to avoid updating the metric during vxm training
@@ -433,9 +436,9 @@ class LearnedSim:
         mask_ = self.mask if self.mask is not None else y_true_.detach() > -0.95
         t = self.model.forward(y_true_, y_pred_, mask=mask_)
         if self.reduction == 'sum':
-            return t.sum()
+            return t.sum() * self.coeff
         elif self.reduction == 'mean':            
-            return t.mean()
+            return t.mean() * self.coeff
         else:
             raise NotImplementedError("only mean and sum is defined")
 
