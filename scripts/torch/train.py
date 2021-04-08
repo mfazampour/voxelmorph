@@ -119,6 +119,7 @@ def parse_args() -> argparse.ArgumentParser:
     parser.add_argument('--flow-logsigma-bias', type=float, default=-10, help='negative value for initialization of the logsigma layer bias value')
     parser.add_argument('--sim_model_path', type=str, metavar='PATH', help='path to the checkpoint file for learned sim')
     parser.add_argument('--reduction', type=str, default='mean', help='type of reduction used for learn-sim and KL', choices=['sum', 'mean'])
+    parser.add_argument('-s', type=int, default=4, help='half window size for LCC')
 
     # loading and saving parameters
     parser.add_argument('--log-dir', type=str, default=None, help='folder for tensorboard logs')
@@ -247,7 +248,7 @@ def create_optimizers(args, bidir, model, device):
         image_loss_func = image_loss.loss
         args.image_loss = image_loss.type
     elif args.image_loss == 'lcc':
-        image_loss_func = vxm.losses.LCC(s=4, device=device).loss
+        image_loss_func = vxm.losses.LCC(s=args.s, device=device).loss
     else:
         raise ValueError(f'Image loss should be among {available_loss_images}, but found {args.image_loss}')
     # need two image loss functions if bidirectional
