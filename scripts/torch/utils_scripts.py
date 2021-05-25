@@ -8,7 +8,7 @@ from monai.metrics import compute_average_surface_distance
 import torchio
 from torchio.transforms import Resample
 import SimpleITK as sitk
-
+import voxelmorph as vxm
 
 import matplotlib.pyplot as plt
 
@@ -106,6 +106,7 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
     asd_scores = []
     seg_maps = []
     dvfs = []
+    jacobs = []
 
     with torch.no_grad():
         if test_generator is not None:
@@ -120,6 +121,10 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
             seg_maps.append(seg_map)
             if keep_dvfs:
                 dvfs.append(dvf)
+            else:
+                jacob = vxm.py.utils.jacobian_determinant(
+                    dvf[0, ...].permute(*range(1, len(dvf.shape) - 1), 0).cpu().numpy())
+                jacobs.append(torch.tensor([[jacob[jacob < 0].size]]).to(torch.float32))
             dice_scores.append(dice_score)
             hd_scores.append(hd_score)
             asd_scores.append(asd_score)
@@ -127,13 +132,15 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
         dice_scores = torch.cat(dice_scores)
         hd_scores = torch.cat(hd_scores)
         asd_scores = torch.cat(asd_scores)
+        if len(jacobs) > 0:
+            jacobs = torch.cat(jacobs)
         if calc_statistics:
             dice_std = dice_scores.std(dim=0, keepdim=True)
             hd_std = hd_scores.std(dim=0, keepdim=True)
             asd_std = asd_scores.std(dim=0, keepdim=True)
         else:
             dice_std, hd_std, asd_std = (torch.tensor([0.0]), torch.tensor([0.0]), torch.tensor([0.0]))
-        return dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs
+        return dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs, jacobs
 
 
 def create_toy_sample(img: torch.Tensor, mask: torch.Tensor, method: str = 'noise', num_changes=1, fill=0, sigma=1):

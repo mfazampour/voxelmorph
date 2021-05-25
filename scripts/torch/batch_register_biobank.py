@@ -125,7 +125,7 @@ def main():
 
 def get_stats(input_, fixed_label, mask_values, model, args, device, df_ASD, df_DSC, df_HD, df_Jac, im_num, resizer,
               structures_dict, transformer, method):
-    dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs = \
+    dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs, _ = \
         calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
                     y_true=[fixed_label], num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
                     affine=args.affine, resize_module=resizer)

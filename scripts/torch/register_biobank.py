@@ -236,7 +236,7 @@ if args.use_probs and args.moving_seg:
                   fixed.image.tensor.unsqueeze(dim=0).to(device), moving.label.tensor.unsqueeze(dim=0).to(device)]
     y_true = [fixed.label.tensor.unsqueeze(dim=0).to(device)]
     with torch.no_grad():
-        dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs = \
+        dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs, jacobs = \
             calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
                         y_true=y_true, num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
                         affine=moving.image.affine, resize_module=resizer,
@@ -257,7 +257,14 @@ if args.use_probs and args.moving_seg:
         print(f'Dice, {structures_dict[int(mask_values[i])]}, {d}, {d_std}')
         print(f'MSD, {structures_dict[int(mask_values[i])]}, {a}, {a_std}')
 
-    if args.save_fields:
+    if not args.save_fields:
+        print(f'mean number of non-positive determinant of jacobian {jacobs.mean()}')
+        with open(os.path.join(args.output_dir, 'jacob.csv'), 'wt') as f:
+            scores_ = jacobs[:, 0].cpu().numpy()
+            scores_str = np.array2string(scores_, separator=", ", precision=4).replace('[', '') \
+                .replace(']', '').replace('\n', '')
+            f.write(f'Num_Non_positive_Jac_Det, {scores_str}\n')
+    else:
         ddf_dir = os.path.join(args.output_dir, 'ddf/')
         os.makedirs(ddf_dir, exist_ok=True)
         jacob_dir = os.path.join(args.output_dir, 'jacob/')
