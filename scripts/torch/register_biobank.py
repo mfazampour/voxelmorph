@@ -239,7 +239,8 @@ if args.use_probs and args.moving_seg:
         dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs = \
             calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
                         y_true=y_true, num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
-                        affine=moving.image.affine, resize_module=resizer, keep_dvfs=args.save_fields)
+                        affine=moving.image.affine, resize_module=resizer,
+                        keep_dvfs=args.save_fields, spacing=np.array([args.target_spacing] * 3))
         dice_score = dice_scores.mean(dim=0, keepdim=True)
         hd_score = hd_scores.mean(dim=0, keepdim=True)
         asd_score = asd_scores.mean(dim=0, keepdim=True)

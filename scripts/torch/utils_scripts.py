@@ -7,6 +7,8 @@ from monai.metrics import compute_hausdorff_distance
 from monai.metrics import compute_average_surface_distance
 import torchio
 from torchio.transforms import Resample
+import SimpleITK as sitk
+
 
 import matplotlib.pyplot as plt
 
@@ -50,7 +52,7 @@ def resize_to_1mm(img: torch.Tensor, affine):
 
 
 def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.nn.Module,
-               inputs, y_true, affine=None, resize_module: torch.nn.Module = None):
+               inputs, y_true, affine=None, resize_module: torch.nn.Module = None, spacing=None):
     inputs, y_true, y_pred = apply_model(model, inputs=inputs,
                                          y_true=y_true, device=device,
                                          is_test=True, has_seg=True)
@@ -58,10 +60,15 @@ def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.n
     seg_moving = inputs[-1].clone()
     dvf = y_pred[-1].detach()
     seg_morphed = transformer(seg_moving, dvf)
+    if spacing is not None:
+        asd_score_dg, dice_score_dg = calc_asd(seg_fixed, seg_moving, mask_values, spacing)
     if affine is not None:
         seg_morphed = resize_to_1mm(seg_morphed, affine)
         seg_fixed = resize_to_1mm(seg_fixed, affine)
         seg_moving = resize_to_1mm(seg_moving, affine)
+    if spacing is None:  # calculate after resampling to 1mm isometric
+        asd_score_dg, dice_score_dg = calc_asd(seg_fixed, seg_moving, mask_values, np.array([1, 1, 1]))
+
     if resize_module is not None:
         dvf = resize_module(dvf)
     seg_morphed = seg_morphed.round()
@@ -84,13 +91,13 @@ def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.n
         hd_score[0, i] = compute_hausdorff_distance(seg_morphed, seg_fixed, i)
         asd_score[0, i] = compute_average_surface_distance(seg_morphed, seg_fixed, i)
     seg_maps = (seg_fixed.cpu(), seg_moving.cpu(), seg_morphed.cpu())
-    return asd_score, dice_score, hd_score, seg_maps, dvf
+    return asd_score_dg, dice_score_dg, hd_score, seg_maps, dvf
 
 
 def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.nn.Module,
                 test_generator=None, inputs=None, y_true=None,
                 num_statistics_runs=10, calc_statistics=False, affine=None,
-                resize_module: torch.nn.Module = None, keep_dvfs=True):
+                resize_module: torch.nn.Module = None, keep_dvfs=True, spacing=None):
     reps = 1
     if calc_statistics:
         reps = num_statistics_runs
@@ -108,7 +115,8 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
                 print(f'---------- getting sample number: {n+1}/{reps} ------------')
             asd_score, dice_score, hd_score, seg_map, dvf = get_scores(device, mask_values, model, transformer,
                                                                        inputs=inputs, y_true=y_true,
-                                                                       affine=affine, resize_module=resize_module)
+                                                                       affine=affine, resize_module=resize_module,
+                                                                       spacing=spacing)
             seg_maps.append(seg_map)
             if keep_dvfs:
                 dvfs.append(dvf)
@@ -148,3 +156,50 @@ def create_toy_sample(img: torch.Tensor, mask: torch.Tensor, method: str = 'nois
 
 def swap_indices(img: torch.Tensor, indices):
     return img
+
+
+def calc_asd(seg_fixed, seg_moving, mask_values, spacing):
+    """
+    calculate average surface distances and Dice scores
+    """
+
+    hausdorff_distance_filter = sitk.HausdorffDistanceImageFilter()
+    overlap_measures_filter = sitk.LabelOverlapMeasuresImageFilter()
+
+    ASD = torch.zeros(len(mask_values), device=seg_fixed.device)
+    DSC = torch.zeros(len(mask_values), device=seg_fixed.device)
+
+    seg_fixed_arr = seg_fixed.squeeze().cpu().numpy()
+    seg_moving_arr = seg_moving.squeeze().cpu().numpy()
+    spacing = spacing.tolist()
+
+    def calc_ASD(seg_fixed_im, seg_moving_im):
+        seg_fixed_contour = sitk.LabelContour(seg_fixed_im)
+        seg_moving_contour = sitk.LabelContour(seg_moving_im)
+
+        hausdorff_distance_filter.Execute(seg_fixed_contour, seg_moving_contour)
+        return hausdorff_distance_filter.GetAverageHausdorffDistance()
+
+    def calc_DSC(seg_fixed_im, seg_moving_im):
+        overlap_measures_filter.Execute(seg_fixed_im, seg_moving_im)
+        return overlap_measures_filter.GetDiceCoefficient()
+
+    for idx, val in enumerate(mask_values):
+
+        seg_fixed_structure = np.where(seg_fixed_arr == val, 1, 0)
+        seg_moving_structure = np.where(seg_moving_arr == val, 1, 0)
+
+        seg_fixed_im = sitk.GetImageFromArray(seg_fixed_structure)
+        seg_moving_im = sitk.GetImageFromArray(seg_moving_structure)
+
+        seg_fixed_im.SetSpacing(spacing)
+        seg_moving_im.SetSpacing(spacing)
+
+        try:
+            ASD[idx] = calc_ASD(seg_fixed_im, seg_moving_im)
+        except:
+            ASD[idx] = np.inf
+
+        DSC[idx] = calc_DSC(seg_fixed_im, seg_moving_im)
+
+    return ASD, DSC
