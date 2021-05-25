@@ -61,13 +61,13 @@ def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.n
     dvf = y_pred[-1].detach()
     seg_morphed = transformer(seg_moving, dvf)
     if spacing is not None:
-        asd_score_dg, dice_score_dg = calc_asd(seg_fixed, seg_moving, mask_values, spacing)
+        asd_score_dg, dice_score_dg = calc_asd(seg_fixed, seg_morphed, mask_values, spacing)
     if affine is not None:
         seg_morphed = resize_to_1mm(seg_morphed, affine)
         seg_fixed = resize_to_1mm(seg_fixed, affine)
         seg_moving = resize_to_1mm(seg_moving, affine)
     if spacing is None:  # calculate after resampling to 1mm isometric
-        asd_score_dg, dice_score_dg = calc_asd(seg_fixed, seg_moving, mask_values, np.array([1, 1, 1]))
+        asd_score_dg, dice_score_dg = calc_asd(seg_fixed, seg_morphed, mask_values, np.array([1, 1, 1]))
 
     if resize_module is not None:
         dvf = resize_module(dvf)
