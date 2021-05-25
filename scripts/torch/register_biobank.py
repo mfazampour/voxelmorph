@@ -11,31 +11,35 @@ scan (moving) to an atlas (fixed). To register a scan to the atlas and save the 
 The source and target input images are expected to be affinely registered.
 """
 
-import os
 import argparse
+import os
+import pathlib
+import sys
 from datetime import datetime
 
 import numpy as np
-import nibabel as nib
 import torch
 import torchio
+from monai.metrics import compute_meandice, compute_average_surface_distance
 from torchio.transforms import (
     RescaleIntensity,
     Compose,
     CropOrPad,
     Resample
 )
-import SimpleITK as sitk
+from scripts.torch.utils_scripts import calc_scores
+from scripts.torch.utils_scripts import create_toy_sample
+
 # from tvtk.api import tvtk, write_data
 
-from monai.metrics import compute_meandice, compute_hausdorff_distance, compute_average_surface_distance
-
+sys.path.append(str(pathlib.Path(__file__).parent.parent.parent.absolute()))  # add vxm path
+sys.path.append(str(pathlib.Path(__file__).parent.parent.parent.absolute()
+                    / 'voxelmorph' / 'torch' / 'learnsim'))  # add learnsim path
 # import voxelmorph with pytorch backend
 os.environ['VXM_BACKEND'] = 'pytorch'
 import voxelmorph as vxm
 
-from scripts.torch.utils_scripts import calc_scores
-from scripts.torch.utils_scripts import create_toy_sample
+
 
 
 def biobank_transform(target_shape=None, min_value=0, max_value=1, target_spacing=None, resample_after=False):
