@@ -109,7 +109,7 @@ def main():
                 df_ASD, df_DSC, df_HD, df_Jac = get_stats(input_, fixed_label, mask_values, model_test, args, device,
                                                           df_ASD, df_DSC, df_HD, df_Jac, im_num, resizer, structures_dict,
                                                           transformer, args.method_test)
-                print(f'processed sample {im_num}/{args.num_test_imgs} in {time.time()-start} seconds')
+                print(f'processed sample {im_num+1}/{args.num_test_imgs} in {time.time()-start} seconds')
             torch.cuda.empty_cache()
 
     if args.registration_speed:

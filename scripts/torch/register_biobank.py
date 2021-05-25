@@ -129,17 +129,29 @@ fixed = trasform(fixed)
 moving_fs = full_size(moving)
 fixed_fs = full_size(fixed)
 
-# load and set up model
-model = vxm.networks.VxmDense.load(args.model, device)
-model.to(device)
-model.eval()
-
 structures_dict = {0: 'backround',
                    10: 'left_thalamus', 11: 'left_caudate', 12: 'left_putamen',
                    13: 'left_pallidum', 16: 'brain_stem', 17: 'left_hippocampus',
                    18: 'left_amygdala', 26: 'left_accumbens', 49: 'right_thalamus',
                    50: 'right_caudate', 51: 'right_putamen', 52: 'right_pallidum',
                    53: 'right_hippocampus', 54: 'right_amygdala', 58: 'right_accumbens'}
+
+str_vols = {}
+for key in structures_dict.keys():
+    if structures_dict[key] == 'backround':
+        continue
+    sum_ = (moving['label'].data == key).sum()
+    print(f'{structures_dict[key]} volume is {sum_}')
+    str_vols[key] = sum_
+
+max_vol = np.asarray(list(str_vols.values())).max()
+for key in str_vols:
+    print(f'{structures_dict[key]} volume ratio is {str_vols[key]/max_vol}')
+
+# load and set up model
+model = vxm.networks.VxmDense.load(args.model, device)
+model.to(device)
+model.eval()
 
 # predict
 with torch.no_grad():
@@ -239,11 +251,14 @@ if args.use_probs and args.moving_seg:
         print(f'MSD, {structures_dict[int(mask_values[i])]}, {a}, {a_std}')
 
     ddf_dir = os.path.join(args.output_dir, 'ddf/')
+    jacob_dir = os.path.join(args.output_dir, 'jacob/')
     os.makedirs(ddf_dir, exist_ok=True)
     for i, (ddf) in enumerate(dvfs):
         jacob = vxm.py.utils.jacobian_determinant(ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
         print(f'jacob negative count, {jacob[jacob < 0].size}, sample, {i}')
         print(f'jacob negative ratio, {jacob[jacob < 0].size / jacob.size}, sample, {i}')
+        img = torchio.ScalarImage(tensor=jacob[0, ...].cpu(), affine=moving_fs['image'].affine)
+        img.save(os.path.join(jacob_dir, f'jacob{i}.mhd'))
         img = torchio.ScalarImage(tensor=ddf[0, ...].cpu(), affine=moving_fs['image'].affine)
         img.save(os.path.join(ddf_dir, f'ddf{i}.mhd'))
 
