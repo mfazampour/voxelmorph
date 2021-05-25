@@ -89,7 +89,8 @@ def get_scores(device, mask_values, model: torch.nn.Module, transformer: torch.n
 
 def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.nn.Module,
                 test_generator=None, inputs=None, y_true=None,
-                num_statistics_runs=10, calc_statistics=False, affine=None, resize_module: torch.nn.Module = None):
+                num_statistics_runs=10, calc_statistics=False, affine=None,
+                resize_module: torch.nn.Module = None, keep_dvfs=True):
     reps = 1
     if calc_statistics:
         reps = num_statistics_runs
@@ -103,11 +104,14 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
         if test_generator is not None:
             inputs, y_true = next(test_generator)
         for n in range(reps):
+            if reps > 50:
+                print(f'---------- getting sample number: {n+1}/{reps} ------------')
             asd_score, dice_score, hd_score, seg_map, dvf = get_scores(device, mask_values, model, transformer,
                                                                        inputs=inputs, y_true=y_true,
                                                                        affine=affine, resize_module=resize_module)
             seg_maps.append(seg_map)
-            dvfs.append(dvf)
+            if keep_dvfs:
+                dvfs.append(dvf)
             dice_scores.append(dice_score)
             hd_scores.append(hd_score)
             asd_scores.append(asd_score)
