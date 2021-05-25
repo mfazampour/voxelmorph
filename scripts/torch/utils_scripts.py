@@ -166,8 +166,8 @@ def calc_asd(seg_fixed, seg_moving, mask_values, spacing):
     hausdorff_distance_filter = sitk.HausdorffDistanceImageFilter()
     overlap_measures_filter = sitk.LabelOverlapMeasuresImageFilter()
 
-    ASD = torch.zeros(len(mask_values), device=seg_fixed.device)
-    DSC = torch.zeros(len(mask_values), device=seg_fixed.device)
+    ASD = torch.zeros((1, len(mask_values)), device=seg_fixed.device)
+    DSC = torch.zeros((1, len(mask_values)), device=seg_fixed.device)
 
     seg_fixed_arr = seg_fixed.squeeze().cpu().numpy()
     seg_moving_arr = seg_moving.squeeze().cpu().numpy()
@@ -196,10 +196,10 @@ def calc_asd(seg_fixed, seg_moving, mask_values, spacing):
         seg_moving_im.SetSpacing(spacing)
 
         try:
-            ASD[idx] = calc_ASD(seg_fixed_im, seg_moving_im)
+            ASD[0, idx] = calc_ASD(seg_fixed_im, seg_moving_im)
         except:
-            ASD[idx] = np.inf
+            ASD[0, idx] = np.inf
 
-        DSC[idx] = calc_DSC(seg_fixed_im, seg_moving_im)
+        DSC[0, idx] = calc_DSC(seg_fixed_im, seg_moving_im)
 
     return ASD, DSC
