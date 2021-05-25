@@ -27,8 +27,7 @@ from torchio.transforms import (
     CropOrPad,
     Resample
 )
-from scripts.torch.utils_scripts import calc_scores
-from scripts.torch.utils_scripts import create_toy_sample
+
 
 # from tvtk.api import tvtk, write_data
 
@@ -39,6 +38,8 @@ sys.path.append(str(pathlib.Path(__file__).parent.parent.parent.absolute()
 os.environ['VXM_BACKEND'] = 'pytorch'
 import voxelmorph as vxm
 
+from scripts.torch.utils_scripts import calc_scores
+from scripts.torch.utils_scripts import create_toy_sample
 
 
 
