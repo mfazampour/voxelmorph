@@ -92,6 +92,7 @@ parser.add_argument('--use-toy', action='store_true', help='create a toy example
 parser.add_argument("--output-dir", required=True, help="directory to dave the results")
 parser.add_argument("--sampling-speed", action='store_true', help='measure the sampling through 10k runs')
 parser.add_argument("--save-fields", action='store_true', help='save ddf related images')
+parser.add_argument("--store-in-original-res", action='store_true', help='save ddf maps in original image resolution')
 args = parser.parse_args()
 
 # device handling
@@ -238,9 +239,13 @@ if args.use_probs and args.moving_seg:
     with torch.no_grad():
         dice_scores, hd_scores, asd_scores, dice_std, hd_std, asd_std, seg_maps, dvfs, jacobs = \
             calc_scores(device, mask_values, model, transformer=transformer, inputs=input_,
-                        y_true=y_true, num_statistics_runs=args.num_statistics_runs, calc_statistics=True,
-                        affine=moving.image.affine, resize_module=resizer,
-                        keep_dvfs=args.save_fields, spacing=np.array([args.target_spacing] * 3))
+                        y_true=y_true,
+                        num_statistics_runs=args.num_statistics_runs,
+                        calc_statistics=True,
+                        affine=moving.image.affine,
+                        resize_module=resizer if args.store_in_original_res else None,
+                        keep_dvfs=args.save_fields,
+                        spacing=np.array([args.target_spacing] * 3))
         dice_score = dice_scores.mean(dim=0, keepdim=True)
         hd_score = hd_scores.mean(dim=0, keepdim=True)
         asd_score = asd_scores.mean(dim=0, keepdim=True)
@@ -278,15 +283,23 @@ if args.use_probs and args.moving_seg:
             img = torchio.ScalarImage(tensor=ddf[0, ...].cpu(), affine=moving_fs['image'].affine)
             img.save(os.path.join(ddf_dir, f'ddf{i}.mhd'))
 
-        ddf_affine = repad_resample(torchio.ScalarImage(tensor=ddf.squeeze(dim=0).cpu(), affine=moving_fs['image'].affine)).affine
-        dvfs = [repad_resample(torchio.ScalarImage(tensor=ddf.squeeze(dim=0).cpu(), affine=moving_fs['image'].affine)).data/args.final_spacing for ddf in dvfs]
+        if args.store_in_original_res:
+            ddf_affine = repad_resample(torchio.ScalarImage(tensor=ddf.squeeze(dim=0).cpu(), affine=moving_fs['image'].affine)).affine
+            dvfs = [repad_resample(torchio.ScalarImage(tensor=ddf.squeeze(dim=0).cpu(), affine=moving_fs['image'].affine)).data/args.final_spacing for ddf in dvfs]
+        else:
+            ddf_affine = moving.image.affine
+            dvfs = [ddf.squeeze(dim=0).cpu() for ddf in dvfs]
         dvfs = torch.stack(dvfs, dim=0)
         dvfs_norm = torch.norm(dvfs, p=2, dim=1)  # calculate the displacement field
         dvf_std = torch.std(dvfs_norm, dim=0, keepdim=True).cpu()
         dvf_mean = torch.mean(dvfs, dim=0).cpu()
         if args.moving_seg_brain:
-            dvf_std = dvf_std * repad_resample(moving_fs)['mask'].data
-            dvf_mean = dvf_mean * repad_resample(moving_fs)['mask'].data.repeat((3, 1, 1, 1))
+            if args.store_in_original_res:
+                mask = repad_resample(moving_fs)['mask'].data
+            else:
+                mask = moving['mask'].data
+            dvf_std = dvf_std * mask
+            dvf_mean = dvf_mean * mask.repeat((3, 1, 1, 1))
 
         img = torchio.ScalarImage(tensor=dvf_std, affine=ddf_affine)
         img.save(os.path.join(args.output_dir, f'ddf_norm_std.mhd'))
