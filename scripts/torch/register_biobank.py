@@ -278,9 +278,13 @@ if args.use_probs and args.moving_seg:
             jacob = vxm.py.utils.jacobian_determinant(ddf[0, ...].permute(*range(1, len(ddf.shape) - 1), 0).cpu().numpy())
             print(f'jacob negative count, {jacob[jacob <= 0].size}, sample, {i}')
             print(f'jacob negative ratio, {jacob[jacob <= 0].size / jacob.size}, sample, {i}')
-            img = torchio.ScalarImage(tensor=torch.tensor(jacob).unsqueeze(dim=0), affine=moving_fs['image'].affine)
+            if args.store_in_original_res:
+                affine = moving_fs['image'].affine
+            else:
+                affine = moving.image.affine
+            img = torchio.ScalarImage(tensor=torch.tensor(jacob).unsqueeze(dim=0), affine=affine)
             img.save(os.path.join(jacob_dir, f'jacob{i}.mhd'))
-            img = torchio.ScalarImage(tensor=ddf[0, ...].cpu(), affine=moving_fs['image'].affine)
+            img = torchio.ScalarImage(tensor=ddf[0, ...].cpu(), affine=affine)
             img.save(os.path.join(ddf_dir, f'ddf{i}.mhd'))
 
         if args.store_in_original_res:
