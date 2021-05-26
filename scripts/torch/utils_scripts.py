@@ -124,7 +124,7 @@ def calc_scores(device, mask_values, model: torch.nn.Module, transformer: torch.
             else:
                 jacob = vxm.py.utils.jacobian_determinant(
                     dvf[0, ...].permute(*range(1, len(dvf.shape) - 1), 0).cpu().numpy())
-                jacobs.append(torch.tensor([[jacob[jacob < 0].size]]).to(torch.float32))
+                jacobs.append(torch.tensor([[jacob[jacob <= 0].size]]).to(torch.float32))
             dice_scores.append(dice_score)
             hd_scores.append(hd_score)
             asd_scores.append(asd_score)
